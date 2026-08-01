@@ -45,6 +45,16 @@
 
 任何字段只要 selector 存在但 `quality.valid !== true`，整条路线仍是未映射，不能进入批量。
 
+### 图片型 Facts 例外
+
+`supplement_facts` 只存在于商品画廊图片时，checkpoint 使用 `sourceKind: "gallery_image"`。此时映射目标是稳定的商品画廊 selector，不是图片里的文字，也不把画廊 selector 写成 `selector_text`：
+
+- 画廊 selector 必须唯一且 `quality.imageCount >= 1`；
+- Facts 缩略图选择或 Zoom/modal 失败不终止重放，执行层继续读取渲染画廊、Document/CDP 图片映射和 `pageAssets`；
+- 网页放大控件不是必需规则，不能作为批量回放依赖；
+- 直接图片 URL 取得后仍必须截图读取内部 Facts 标题，才能生成 `facts_images`；请求 `main_ingredients` 时还必须读完主要/活性成分行；
+- 若既没有稳定画廊映射，也没有可绑定当前商品的图片资源，仍按 `visual_field_target_not_mapped:supplement_facts` 失败。
+
 ## 性能边界
 
 - 导航重放和字段展开默认不读取 gallery/pageAssets；

@@ -130,6 +130,8 @@ detail profile 只能在截图首遍已经走到代表商品、视觉确认每�
 
 `images` 不走 `fieldRules`，由 `engine` 的图片管线处理：候选收集 → 打分排序 → 去重 → 过滤。已经内置的处理包括 srcset 取最大图、WordPress `-300x300` 缩略图后缀剥离、`thumb.php?img=...` 与 Next.js `/_next/image?url=...` 等图片代理、本地化 `foto-*` 画廊、装饰图/图标过滤。HTTP/HTTPS、图片代理尺寸变体和已知缩略图/原图变体会按同一资源身份去重，并优先保留 HTTPS、画廊大图或已验证的原图。Next.js 代理的底层原图也必须先通过真实浏览器 MIME 与尺寸验证，不能只解码查询参数就直接替换。
 
+若 `supplement_facts` 来自画廊图片而非页面文本/Table，`visualRoute.fieldJourney` 的 checkpoint 必须保存 `sourceKind: "gallery_image"`，并把 `targetSelector` 指向含真实图片的稳定商品画廊。执行层不会为它生成 `selector_text`，也不会要求 Zoom/modal 揭示规则；它会把该 selector 加入 `ImageExtractionProfile.galleryContainerHints`，从画廊、Document/CDP 和 `pageAssets` 收集直接图片 URL。图片内容是否属于 Facts 仍由视觉复核决定，不能用这个来源标记直接断言。
+
 只有默认管线抓不到时才补 `imageRegexes`。另可给 `ImageExtractionProfile`（`crawl` 各函数的 `imageProfile` 参数）指定 gallery 容器和排除模式：
 
 ```json

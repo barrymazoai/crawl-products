@@ -211,7 +211,7 @@ visualRoute.status = "visual_complete";
 
 视觉路线至少包含入口、列表、代表商品和全部请求字段。点击只用于导航、滚动、展开或查看详情；不要点击加入购物车、结账、提交表单等有状态动作。
 
-请求 `facts_images` 时，字段视觉路线还包括画廊：扫描全部缩略图，打开疑似表格、背标、Ingredients/Label 及无标签的后续图片，读到图片内部的 Facts 标题才算完成。不能因为 DOM `alt` 没写 Facts 就判定不存在。
+请求 `facts_images` 时，字段视觉路线还包括画廊：扫描全部缩略图，打开疑似表格、背标、Ingredients/Label 及无标签的后续图片，读到图片内部的 Facts 标题才算完成。若站内 Zoom/modal 点不开，不得把它当成字段失败或继续依赖屏幕位置；把 checkpoint 标为 `sourceKind: "gallery_image"`，视觉定位缩略图/主画廊后进入第二遍，映射画廊 selector 并从 DOM、CDP、Document 和 `pageAssets` 取得直接图片 URL，再直接加载该资源截图复核。不能因为 Zoom 失效或 DOM `alt` 没写 Facts 就判定不存在。
 
 截图调用超时、`Page.captureScreenshot` 失败或成功截图大面积异常空白，都属于浏览器执行面问题，不是站点访问失败。超时立即隔离 tab；异常空白只允许在页面 URL/title 已稳定且没有超时的情况下短等后重截一次。第二次仍空白就记为 `screenshot_render_blank`。若此前尚未用视觉证明目录/详情路径，停止并汇报；若视觉已经走到明确的 listing、detail 或 `inline_catalog`，第二遍可继续用 DOM/CDP 映射已经证明的路线，但不能倒退成 DOM 自动探索。
 
@@ -252,14 +252,14 @@ console.log({
 
 1. 用动作文字和已知目标 URL 找回对应元素；
 2. 从被点击链接向上寻找重复商品卡祖先，只有组合 selector 命中多个不同商品 URL 才保存为 `repeated_cards`；真正只有一个商品时保存唯一 selector 和 `single_product`；
-3. 重放详情页滚动、tab 和 accordion，把每个字段内容映射成 `targetSelector`，同时保存 tag、唯一命中数、文本/图片/视频计数和语义信号；把揭示控件映射成 `selectorHint`；
+3. 重放详情页滚动、tab 和 accordion，把 DOM 字段内容映射成 `targetSelector`；图片型 Facts 保存 `sourceKind: "gallery_image"` 并映射商品画廊，不要求 Zoom/modal 可用；同时保存 tag、唯一命中数、文本/图片/视频计数和语义信号；
 4. 由完整字段旅程生成 `detailProfile.fieldRules`、`fieldPolicy`、`interactionHints` 和图片 gallery hint；
 5. 在真实导航和关键揭示动作前开启 CDP Network，捕获导航、XHR 和 Fetch；字段映射阶段不反复读取图片资源；
 6. 为每个页面角色保存结构指纹；
-7. 全部字段映射完成后只在最终详情页读取一次 gallery/pageAssets 高清图证据，并为 pageAssets 设置硬超时；
+7. 全部字段映射完成后只在最终详情页读取一次 gallery/pageAssets 高清图证据；图片型 Facts 直接加载候选 CDN/原图 URL 做截图复核，网页放大控件只是可选辅助；
 8. 丢弃截图坐标，只保存无字段值规则；网络响应体也不写进视觉路线。
 
-任何请求字段仍是 `uncertain`、缺 `targetSelector`、缺有效 `quality`，图片 selector 不含真实图片，标量字段错误共用同一 selector，或隐藏字段缺揭示 selector 时，`replayVisualRoute` 必须失败，不能绕过后直接调用 `crawlSite`。完整门槛见 [replay-quality-gates.md](references/replay-quality-gates.md)。
+任何请求字段仍是 `uncertain`、缺稳定映射、缺有效 `quality`，图片 selector 不含真实图片，标量字段错误共用同一 selector，或 DOM 隐藏字段缺揭示 selector 时，`replayVisualRoute` 必须失败。唯一例外是 `sourceKind: "gallery_image"`：它必须映射到含真实图片的商品画廊，但不要求 Facts 文本 selector 或可用的 Zoom 揭示控件；后续图片内容视觉复核仍是硬门槛。完整规则见 [replay-quality-gates.md](references/replay-quality-gates.md)。
 
 若 visual route 是单页目录，第二遍到达 `inline_catalog` 后再检查重复商品容器；不要为了制造详情 URL 去点击“加入购物车”。若是国家/品牌选择页，先汇报 `portfolio`，只有用户明确要求跨站时才继续选择子站。
 
@@ -354,8 +354,8 @@ globalThis.productSemantics = globalThis.productSemantics
 Facts 图片采用“元数据筛选 → 视觉确认”：
 
 1. 对真实商品画廊的每张图调用 `classifyFactsImageCandidate()`。
-2. 明确 Facts 标签可直接分类；`Ingredients`、`Label`、背标、空标签的后续图片必须放大截图。
-3. 从图片内部读到 `Supplement Facts`、`Nutrition Facts`、`Drug Facts` 或 `Product Facts` 后，调用 `finalizeFactsImageReview()`；没读到就传 `isFactsImage:false`。
+2. 明确 Facts 标签可直接分类；`Ingredients`、`Label`、背标、空标签的后续图片必须截图复核。站内放大不可用时直接加载画廊/CDN 原图，不得停止商品路线。
+3. 从直接图片资源内部读到 `Supplement Facts`、`Nutrition Facts`、`Drug Facts` 或 `Product Facts` 后，调用 `finalizeFactsImageReview()`；没读到就传 `isFactsImage:false`。
 4. `alt` 只是候选信号，不是图片内容真值。`Ingredients` 既可能是普通配料图，也可能实际包含 Supplement Facts。
 5. 请求 `main_ingredients` 时继续在放大图上逐行读取主要/活性成分及剂量，再调用 `finalizeFactsIngredientReview()`；只确认 Facts 标题不算完成成分字段。
 

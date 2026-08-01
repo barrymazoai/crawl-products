@@ -14,11 +14,11 @@
 
 对每个商品的真实画廊图片执行以下顺序：
 
-1. 先扫描画廊缩略图并打开疑似表格、背标或成分标签的图片。不能只检查第一张图。
+1. 先扫描画廊缩略图并选择疑似表格、背标或成分标签的图片。不能只检查第一张图；站内 Zoom/modal 点不开时标记 `sourceKind: "gallery_image"`，不要停止路线。
 2. 用 `classifyFactsImageCandidate()` 读取 `alt`、`title`、资源名和画廊位置：
    - 明确写出 `Supplement Facts`、`Nutrition Facts`、`Drug Facts` 或 `Product Facts` 时可直接分类。
    - `Ingredients`、`Label`、`Back panel`、`Composition`、空标签的第二/后续图片只作为候选，必须视觉复核。
-3. 放大候选图，通过截图读取图片内部的标题；视觉确认后调用 `finalizeFactsImageReview()`。
+3. 优先加载画廊取得的直接 CDN/原图 URL 并截图读取内部标题；网页放大控件只作可选辅助。视觉确认后调用 `finalizeFactsImageReview()`。
 4. 图片内容没有 Facts 标题时传 `isFactsImage:false`。`Ingredients` 标签本身不能证明它是 Facts。
 5. 同一图片可以同时保留在普通商品画廊和 `facts_images`，除非用户明确要求把标签图从普通图片中排除。
 6. 请求 `main_ingredients` 时不能停在标题识别：继续读取面板内的主要/活性成分行和可见剂量，并调用 `finalizeFactsIngredientReview()`。
