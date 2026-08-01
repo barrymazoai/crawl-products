@@ -14,9 +14,9 @@ description: "在 Codex App 连接的用户本地 Chrome 中，由模型用视�
 1. 每个最终产品必须来自真实 HTTP(S) 详情 URL；列表页或 `#inline-product=` 合成 URL 只能作为待补库存，不能进入 API-ready 输出。
 2. “发现了 N 个商品”与“完整提取了 N 个商品”分开统计。标题加缩略图是 partial，不是完整详情。
 3. 请求 API 完整产品时，每条必须有 `productUrl`、`productName`、完整画廊检查、`productForm`、`healthFunctions` 和 `mainIngredients`；缺一项进入 review/error 队列，不能用空数组静默通过。
-4. 画廊必须逐图检查。疑似 Supplement Facts、Nutrition Facts、Drug Facts、Product Facts、Ingredients、Label、背标和无标签后续图必须读取图片内容；不能只看第一张图或 `alt`。
+4. 画廊必须逐图检查，并保留每个资产能取得的最佳直接 CDN/原图 URL；缩略图或列表卡片图不能冒充完成数据。图片代理、缓存和尺寸变体按原始资产身份去重，替换成推测原图前必须在真实浏览器验证图片 MIME 与尺寸。疑似 Supplement Facts、Nutrition Facts、Drug Facts、Product Facts、Ingredients、Label、背标和无标签后续图必须读取图片内容；不能只看第一张图或 `alt`。
 5. Facts/Ingredients 图片存在时，`mainIngredients` 优先从图片中读；网页 Zoom 点不开时，直接从 DOM、Network、CDP 或 page assets 取得图片资源后打开复核，不能因此终止产品。
-6. `productForm`、`healthFunctions` 和 `mainIngredients` 由模型结合页面证据推断；脚本只验证证据、置信度、taxonomy 和医疗声称安全，不用固定词表替代模型判断。
+6. `productForm`、`healthFunctions` 和 `mainIngredients` 由模型结合页面证据推断；脚本只验证证据、置信度、taxonomy 和医疗声称安全，不用固定词表替代模型判断。严格输出里的每个 `mainIngredients` 项必须是 `{name, substance, form?, category}` 对象：`category → substance → form? → name`。纯字符串只能留在 partial 证据中，不能进入 API-ready 数据。
 7. 默认排除 Bundle、Pack、Kit、Stack、Set、Regimen、Duo/Trio、Multi-pack 及非 Nutrition 商品。排除必须保留原因。
 8. 母公司可展开到直属 Brand 一层；Brand 的官方商城接力仍属于同一层，不继续递归 Brand 下面的子品牌。
 9. profile 只保存可复用方法，不保存 Cookie、请求头、响应体或商品字段值。失败的假设不能保存成已验证规则。
@@ -77,14 +77,14 @@ globalThis.productScope = "nutrition_single_products";
 
 ## 核心循环：观察 → 判断 → 行动 → 验证 → 学习
 
-每个未知点都走这个循环。视觉截图是默认最快入口，但不是禁用 DOM/CDP 的教条：先看清页面和目标，再选择最省时、最可靠的能力解释结构或批量取数。
+每个未知点都走这个循环。对未知站点，首遍必须先用截图和视觉操作把“完整目录族 → 商品 → 详情字段 → 画廊”连续走通；这一遍不穿插 DOM、CDP、Network、`pageAssets` 或旧自动发现。视觉路线完整后回到入口正向重放，第二遍才用这些能力解释结构并固化规则。已有且通过代表样本校验的 profile 可以直接重放，不需要重复首遍。
 
 ### 1. 观察
 
 - 导航入口并截图，识别店铺、目录、国家选择、母公司、单页目录、challenge、错误页和弹层。
 - 用视觉找到完整目录族、分类层级、分页/Load More、代表商品、详情全部区域和画廊。
 - 不要因为 `Best Sellers`、单一分类或当前可视的 20 个卡片就宣布完整目录。
-- 对动态布局、按钮不可点击、文本不清或资源被隐藏的点，可立即用 DOM 快照、元素属性、Network、CDP 或 page assets 辅助判断。
+- 首遍某一步看不清时，继续通过截图、滚动、关闭遮罩、切换可见 tab/accordion 或更换干净 tab 判断；不能提前用 DOM/CDP 猜出一条路线再把它包装成视觉发现。
 
 ### 2. 判断
 
@@ -121,7 +121,7 @@ globalThis.productScope = "nutrition_single_products";
 - 标题是商品名，不是站点名或规格数字；
 - 详情字段来自对应商品；
 - 所有分类与分页入口有覆盖证据；
-- 画廊不是只有列表缩略图，或已视觉确认该商品确实只有一张图；
+- 画廊不是只有列表缩略图，且可推导的原图已经过 MIME/尺寸验证；或已视觉确认该商品确实只有一张可用图片；
 - Facts 候选已经逐张判定；
 - 语义字段有 evidence、basis、confidence，推断值有 rationale；
 - scope 排除与保留结果合理。
@@ -130,7 +130,7 @@ globalThis.productScope = "nutrition_single_products";
 
 ### 5. 学习
 
-把通过验证的导航、listing seeds、分页动作、商品卡、详情展开、字段 selector、画廊、图片资源和窄 Network 规则保存到 origin profile。profile 是“可复验的假设”，每次复跑先做廉价多样本校验。
+把通过验证的导航、listing seeds、分页动作、商品卡、详情展开、字段 selector、画廊、图片资源和窄 Network 规则保存到 origin profile。profile 是“可复验的假设”，每次复跑先做廉价多样本校验。新 profile 至少要有 2 个真实详情样本通过源字段校验；只有完整目录证明确实只有 1 个商品时才允许用该 1 个样本晋级。0 商品、错误页或全是 partial 时不得保存/覆盖正式 profile。
 
 进度要增量保存。`extractProductsBatch()` 和 `upgradeProducts()` 支持 `onProgress`；将已处理 URL、partial/complete 状态、失败和 records 写入任务 checkpoint。崩溃后从未完成 URL 恢复，不重复探索已验证路径。
 
@@ -166,14 +166,16 @@ globalThis.productScope = "nutrition_single_products";
 
 详细规则必须读取 [semantic-enrichment.md](references/semantic-enrichment.md)。关键顺序：
 
-1. 收集真实详情页的完整画廊及 alt/title/index/直接资源。
-2. `classifyFactsImageCandidate()` 只做候选分流。
-3. 对明确 Facts、Ingredients/Label/背标及无标签后续图片直接打开资源并截图读取。
-4. `finalizeFactsImageReview()` 记录确认结果；只靠文件名或 alt 不算视觉确认。
-5. 有 Facts 图片时继续读主要/活性成分行，调用 `finalizeFactsIngredientReview()`。
-6. 对每个产品生成 `buildSemanticEvidenceBrief(record)`，由模型推断 form、health function 和 main ingredients。
-7. 用 `normalizeProductSemanticEnrichment()` 校验，再用 `mergeProductSemanticEnrichment()` 合并。
-8. 调用 `finalizeGalleryReview(images, reviews)` 生成 gallery review；它要求每个最终图片 URL 都有 `reviewedVisually:true` 和明确 Facts 判定。不要手写一个完成状态绕过逐图检查。
+1. 收集真实详情页的完整画廊及 alt/title/index/最佳直接资源；同资产的缩略图/代理/原图去重，推测的原图必须先通过真实浏览器 MIME 与尺寸验证。
+2. 在同一详情页视觉检查 DOM/Table/accordion/text 中是否存在 Supplement Facts、Nutrition Facts、Ingredients 或 Key Ingredients；把 found/not_present 和可见证据记录下来。不能因为画廊有 Facts 图就跳过页面元素检查。
+3. `classifyFactsImageCandidate()` 只做候选分流。
+4. 对明确 Facts、Ingredients/Label/背标及无标签后续图片直接打开资源并截图读取。
+5. `finalizeFactsImageReview()` 记录确认结果；只靠文件名或 alt 不算视觉确认。
+6. 有一张或多张 Facts 图片时逐张读主要/活性成分行，每张分别调用 `finalizeFactsIngredientReview()`；合并时必须保留所有图片的成分与证据，后一次不能覆盖前一次。
+7. 调用 `finalizeGalleryReview(images, reviews)` 后，再用 `finalizeFactsSourceReview()` 同时封存“页面元素已检查”和“画廊已检查”的结果。
+8. 对每个产品生成 `buildSemanticEvidenceBrief(record)`，由模型推断 form、health function 和 main ingredients。
+9. 用 `normalizeProductSemanticEnrichment()` 校验，再用 `mergeProductSemanticEnrichment()` 合并。
+10. `finalizeGalleryReview()` 要求每个最终图片 URL 都有 `reviewedVisually:true` 和明确 Facts 判定。不要手写完成状态绕过逐图检查。
 
 不得用成分正则、固定商品词表或标题关键词假装完成语义阶段。确定性工具可以提取原文、去重、验证格式；跨字段理解与合理推断交给模型。
 
@@ -227,7 +229,7 @@ const exported = await productOutput.writeEnrichProductExport(
 - `product-enrich-errors.json`：任何缺失项及原因。
 - `enrich-export-report.json`：收到、可提交和失败数。
 
-严格模式会拒绝缺真实 `productUrl`、图片、gallery review、form、health functions 或 main ingredients 的记录。只有用户明确要求 partial/inventory 输出时才传 `allowPartial:true`，并明确标注它不能直接当成完成数据提交。
+严格模式会拒绝缺真实 `productUrl`、图片、gallery review、DOM+画廊 Facts source review、form、health functions、main ingredients、对应的模型语义证据，或任何缺 `substance/category` 的主成分。若有多张 Facts 图，每张都必须有成分视觉复核记录。只有用户明确要求 partial/inventory 输出时才传 `allowPartial:true`，并明确标注它不能直接当成完成数据提交。
 
 `domain` 默认使用公司可注册域名，例如 `us.shaklee.com` → `shaklee.com`；数据库使用特殊公司域名时通过 `domain` 或 `domainByOrigin` 显式覆盖。`productUrl` 始终保留完整详情 URL。
 
@@ -241,6 +243,7 @@ const exported = await productOutput.writeEnrichProductExport(
 - 发现的真实详情 URL 数、inline 待补数；
 - 完整记录、partial、失败、scope 排除数；
 - 多图覆盖、Facts confirmed/not-present/待复核数；
+- 原图升级、被拒绝的原图候选及仍为缩略图的 review 数；
 - form、healthFunctions、mainIngredients 覆盖；
 - profile 新建/复用/修补及 checkpoint；
 - API-ready 条数和具体错误原因。

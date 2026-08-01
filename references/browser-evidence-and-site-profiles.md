@@ -105,6 +105,8 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
 
 ## site profile
 
+新规则只能在代表详情真实通过后晋级为可复用 profile：通常至少验证 2 个真实商品详情；经完整目录证明全站确实只有 1 个商品时验证该 1 个即可。0 商品、错误页、inline 占位记录、字段缺失或 completion 为 partial 的样本都不能计入，也不能保存或覆盖正式 profile。portfolio 父 profile 适用同一门槛，不能因为识别到 Brand 链接就在子站抓取全失败时保存。
+
 `profile-store.mjs` 当前版本是 `4`，`visualRoute` 版本是 `3`。v4 在 v3 的完整字段旅程上增加字段 selector 的语义质量证据、商品目录模式和跨 origin 关系。v3 的 discovery、listing 和导航 steps 可以局部迁移，但必须重新验证代表详情页字段/图片：
 
 ```json

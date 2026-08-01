@@ -25,7 +25,7 @@
 | `productUrl` | 是（Skill 严格模式） | 商品真实 HTTP(S) 详情 URL；接口字段本身可选，但 Skill 不允许最终数据丢 URL |
 | `images` | 否 | 商品画廊图与已确认的 Facts 图片合并、去重 |
 | `healthFunctions` | 否 | 有证据的 `fields.health_function` |
-| `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；字符串和 taxonomy 对象可混用 |
+| `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；Skill 严格模式要求每项都是完整 taxonomy 对象 |
 | `productForm` | 否 | 有证据的 `fields.form` |
 | `updateExisting` | 否 | 默认且显式输出 `false`；补已有产品关系/图片时设为 `true` |
 | `processedAt` | 否 | 本次导出时间，ISO 字符串 |
@@ -37,11 +37,15 @@
 
 ## 成分 taxonomy
 
-`mainIngredients` 支持：
+接口 Schema 为兼容旧调用方仍支持字符串，但 Skill 的 API-ready 严格模式不允许字符串。每项必须包含 `name`、`substance`、`category`；存在具体化学/制备形态时再提供 `form`：
 
 ```jsonc
 [
-  "Resveratrol",
+  {
+    "name": "Resveratrol",
+    "substance": "Resveratrol",
+    "category": "antioxidants_polyphenols"
+  },
   {
     "name": "Muscadine Grape Extract",
     "substance": "Grape",
@@ -57,13 +61,13 @@
 ```
 
 - `name`：图片或页面证据里的成分名称。
-- `substance`：数据库物质层；只有提供它，新成分才能进入分类树。
+- `substance`：数据库物质层，严格模式必填；只有提供它，新成分才能进入分类树。
 - `form`：形态层，提供时必须同时有 `substance`。
-- `category`：固定分类 slug。提供 `category` 时也必须有 `substance`。
+- `category`：固定分类 slug，严格模式必填。
 
 允许的分类：`vitamins`、`minerals`、`amino_acids_peptides`、`herbs_botanicals`、`mushrooms`、`fatty_acids_lipids`、`probiotics_prebiotics`、`enzymes`、`antioxidants_polyphenols`、`hormones_precursors`、`fibers_carbs`、`proprietary_blends_other`。
 
-taxonomy 必须来自成分原文和可靠归类知识。无法可靠判断 `substance/form/category` 时只输出字符串；禁止为了提高分类覆盖率猜测。
+taxonomy 必须来自成分原文和可靠归类知识。无法可靠判断 `substance/category` 时，把该产品留在 review/error 队列；不能退化成字符串进入最终数据，也禁止为了提高覆盖率猜测。`form` 只有在证据能区分具体化学形态、盐型、提取物或制备形态时才填写。
 
 ## 语义字段
 
@@ -120,7 +124,7 @@ const exported = await productOutput.writeEnrichProductExport(
 );
 ```
 
-默认是严格导出：缺真实 `productUrl`、至少一张图片、`galleryReview.status:"visual_complete"`、`productForm`、`healthFunctions` 或 `mainIngredients` 的记录进入错误文件，不进入 API-ready 请求。只有用户明确要 inventory/partial 时才传 `allowPartial:true`。
+默认是严格导出：缺真实 `productUrl`、至少一张图片、`galleryReview.status:"visual_complete"`、DOM+画廊 Facts source review、`productForm`、`healthFunctions`、`mainIngredients`、对应语义证据，或存在缺 `substance/category` 的主成分时，记录进入错误文件，不进入 API-ready 请求。有多张 Facts 图时必须逐张完成成分复核。只有用户明确要 inventory/partial 时才传 `allowPartial:true`。
 
 固定产物：
 
@@ -142,7 +146,9 @@ const exported = await productOutput.writeEnrichProductExport(
 1. `inputsReady + errors === recordsReceived`。
 2. `product-enrich-errors.json` 为空，或失败记录已经单独解释。
 3. 每个 `domain` 是目标数据库中的公司匹配域名，每个 `productUrl` 是真实详情 URL。
-4. `galleryReview.status` 为 `visual_complete`，且 `reviewed_image_urls` 覆盖最终 `images` 的每个 URL；`images` 包含完整画廊和经视觉确认的 Facts 图片，或 review 明确证明该商品只有一张图/没有 Facts 图。
-5. 有 `facts_images` 的 record 已写入 `factsIngredientReview.status: "visual_complete"`；否则适配器会把它列入导出错误。
-6. taxonomy 对象的 `category` 属于固定 12 类，`form/category` 都有 `substance`。
-7. 只有用户明确授权提交时，才逐行 POST `product-enrich-requests.jsonl`。
+4. `galleryReview.status` 为 `visual_complete`，且 `reviewed_image_urls` 覆盖最终 `images` 的每个 URL；`images` 包含完整画廊、可取得的最佳直接 CDN/原图和经视觉确认的 Facts 图片，推测的原图已经过真实浏览器 MIME/尺寸验证；否则 review 必须明确说明只有一张可用图或原图候选为什么被拒绝。
+5. `factsSourceReview.status` 为 `complete`，并同时证明页面 DOM/Table/accordion 与画廊两种来源都已检查；二者均允许记录 `not_present`，但不能省略检查。
+6. 有 `facts_images` 的 record 必须让每一个 Facts 图片 URL 都对应一条 `factsIngredientReviews[]` 的 `visual_complete` 记录；只复核第一张或只保留最后一张都不合格。
+7. `productForm`、每个 `healthFunctions` 和每个 `mainIngredients` 都能在 `_meta.semanticInferences` 找到 high/medium confidence、证据、basis，以及 inferred 值所需的 rationale。
+8. taxonomy 对象的 `category` 属于固定 12 类，`form/category` 都有 `substance`。
+9. 只有用户明确授权提交时，才逐行 POST `product-enrich-requests.jsonl`。

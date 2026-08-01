@@ -25,6 +25,8 @@
 5. 同一图片可以同时保留在普通商品画廊和 `facts_images`，除非用户明确要求把标签图从普通图片中排除。
 6. 请求 `main_ingredients` 时不能停在标题识别：继续读取面板内的主要/活性成分行和可见剂量，并调用 `finalizeFactsIngredientReview()`。
 7. 全部画廊候选处理完后调用 `finalizeGalleryReview(images, reviews)`；每个最终图片 URL 都必须有 `reviewedVisually:true` 与明确 Facts 判定。该函数生成 `_meta.galleryReview.status: "visual_complete"`、复核 URL 清单和 Facts 结论；不要手写状态绕过逐图检查。
+8. 同时视觉检查详情页自身的 Facts/Table/accordion/Ingredients 元素；调用 `finalizeFactsSourceReview()` 把页面元素的 `found/not_present` 与 gallery review 一起封存。两种来源都检查完才算完成。
+9. 一个商品有多张 Facts 图时逐张调用 `finalizeFactsIngredientReview()`，再用 `mergeProductSemanticEnrichment()` 合并；合并器会按图片 URL 保留全部复核并合并成分，不能只留下最后一张图。
 
 例：页面把第二张图的 `alt` 写成 `Activate Ingredients`，但放大后图片内部标题是 `Supplement Facts`。它应进入 `facts_images`，类型为 `Supplement Facts`，分类依据为 `visual_content`。
 
@@ -67,7 +69,7 @@
 
 ## `main_ingredients`
 
-`main_ingredients` 是供数据库词表和三层 taxonomy 使用的一组主要成分。每项都必须能由 Facts/Ingredients 图片、页面成分区、标题或描述单独证明。
+`main_ingredients` 是供数据库词表和三层 taxonomy 使用的一组主要成分。层级是 `category → substance → form? → ingredient name`。每项都必须能由 Facts/Ingredients 图片、页面成分区、标题或描述单独证明；API-ready 输出必须使用 `{name, substance, form?, category}`，不能只给名称字符串。
 
 - **图片优先是硬门槛**：商品有 Facts/Ingredients 图时，逐张打开、放大并截图读取。只确认图片类型、不读取成分行，字段仍未完成。
 - 从图里选择有独立行、有用量或被标为 active/key 的成分。OCR 可以辅助定位，但截图视觉确认才是证据。
@@ -104,7 +106,7 @@ const enrichment = productSemantics.finalizeFactsIngredientReview(factsImage, {
 record = productSemantics.mergeProductSemanticEnrichment(record, enrichment);
 ```
 
-`name` 是图片实际成分名；`substance` 是数据库物质层，`form` 是形态层，`category` 只能用接口固定分类。只有分类证据可靠时才附加 taxonomy；不确定时输出名称字符串，不要猜分类。
+`name` 是图片实际成分名；`substance` 是数据库物质层，`form` 是形态层，`category` 只能用接口固定分类。只有分类证据可靠时才附加 taxonomy；不确定时可以把名称字符串保留在原始/partial 证据中等待模型复核，但不能进入 API-ready 最终数据，更不能猜分类。
 
 ## 输出结构
 
@@ -118,7 +120,11 @@ record = productSemantics.mergeProductSemanticEnrichment(record, enrichment);
       "cleanse/detox support"
     ],
     "main_ingredients": [
-      "Vitamin C",
+      {
+        "name": "Vitamin C",
+        "substance": "Vitamin C",
+        "category": "vitamins"
+      },
       {
         "name": "Green Tea Extract",
         "substance": "Green Tea",
