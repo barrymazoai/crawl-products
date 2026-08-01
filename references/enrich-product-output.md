@@ -20,8 +20,9 @@
 
 | 字段 | 必需 | 来源 |
 |---|---:|---|
-| `domain` | 是 | 明确覆盖值，或商品字段来源/商品 URL 的 hostname；小写并去掉 `www.` |
+| `domain` | 是 | 明确覆盖值，或商品来源的公司可注册域名；如 `us.shaklee.com` → `shaklee.com` |
 | `productName` | 是 | `fields.title` |
+| `productUrl` | 是（Skill 严格模式） | 商品真实 HTTP(S) 详情 URL；接口字段本身可选，但 Skill 不允许最终数据丢 URL |
 | `images` | 否 | 商品画廊图与已确认的 Facts 图片合并、去重 |
 | `healthFunctions` | 否 | 有证据的 `fields.health_function` |
 | `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；字符串和 taxonomy 对象可混用 |
@@ -32,7 +33,7 @@
 | `price` | 否 | 接口目前接收但不落库，默认不导出 |
 | `supplementFactsOCR` | 否 | 接口目前接收但不落库，默认不导出 |
 
-`domain` 不要擅自压缩成可注册根域名。接口可能按 `shop.example.com` 等公司域名匹配。跨域商城或第三方商品详情必须使用已经验证的商品字段来源；如数据库公司域名与来源 hostname 不同，用显式 `domain` 或 `domainByOrigin` 映射。
+`domain` 默认压缩为公司可注册域名。接口按数据库公司域名匹配；若数据库确实保存 `shop.example.com` 等特殊值，用显式 `domain` 或 `domainByOrigin` 覆盖。`domain` 不能代替 `productUrl`，后者始终保留完整详情地址。
 
 ## 成分 taxonomy
 
@@ -119,13 +120,17 @@ const exported = await productOutput.writeEnrichProductExport(
 );
 ```
 
+默认是严格导出：缺真实 `productUrl`、至少一张图片、`galleryReview.status:"visual_complete"`、`productForm`、`healthFunctions` 或 `mainIngredients` 的记录进入错误文件，不进入 API-ready 请求。只有用户明确要 inventory/partial 时才传 `allowPartial:true`。
+
 固定产物：
 
-- `products.json`：API 内层 `input[]`，作为主要最终数据。
+- `products.json`：主要最终数据；数组内每项都是完整 `{"json": input}` envelope。
+- `product-enrich-inputs.json`：API 内层 `input[]`，仅供调试或分析。
+- `product-enrich-requests.json`：完整 envelope 数组。
 - `product-enrich-requests.jsonl`：每行一个完整 `{"json": input}` HTTP body。
 - `crawl-records.json`：原始爬虫 records、字段来源和语义证据。
 - `products.csv`：API 字段的便览。
-- `product-enrich-errors.json`：无法生成有效接口输入的记录；主要是缺 `domain` 或 `productName`。
+- `product-enrich-errors.json`：无法生成严格接口输入的记录及缺失字段。
 - `enrich-export-report.json`：收到、可提交和失败条数。
 
 默认不导出当前不会落库的 `price` 与 `supplementFactsOCR`。用户明确需要兼容字段时传 `includeNonPersistedFields: true`，并清楚说明接口当前不会持久化它们。
@@ -136,8 +141,8 @@ const exported = await productOutput.writeEnrichProductExport(
 
 1. `inputsReady + errors === recordsReceived`。
 2. `product-enrich-errors.json` 为空，或失败记录已经单独解释。
-3. 每个 `domain` 是目标数据库中的公司匹配域名。
-4. `images` 包含经视觉确认的 Facts 图片，不只是一张封面图。
+3. 每个 `domain` 是目标数据库中的公司匹配域名，每个 `productUrl` 是真实详情 URL。
+4. `galleryReview.status` 为 `visual_complete`，且 `reviewed_image_urls` 覆盖最终 `images` 的每个 URL；`images` 包含完整画廊和经视觉确认的 Facts 图片，或 review 明确证明该商品只有一张图/没有 Facts 图。
 5. 有 `facts_images` 的 record 已写入 `factsIngredientReview.status: "visual_complete"`；否则适配器会把它列入导出错误。
 6. taxonomy 对象的 `category` 属于固定 12 类，`form/category` 都有 `substance`。
 7. 只有用户明确授权提交时，才逐行 POST `product-enrich-requests.jsonl`。

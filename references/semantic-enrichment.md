@@ -2,6 +2,8 @@
 
 本规则只用于商品详情页已经完成视觉定位和结构化抽取之后。原始字段继续以页面为真值；`form`、`health_function`、`main_ingredients` 等派生字段必须明确标注依据，不写入 value-free profile。
 
+推断由模型完成，不由正则或脚本硬编码。可以先调用 `buildSemanticEvidenceBrief(record)` 生成有界证据包，模型结合标题、分类、描述、Directions、成分区、Facts 图片和包装视觉作出判断；再用 `normalizeProductSemanticEnrichment()` 校验结果。脚本没有产出语义字段时，表示仍需模型处理，不表示字段为空。
+
 ## 目录
 
 - Facts 图片
@@ -22,6 +24,7 @@
 4. 图片内容没有 Facts 标题时传 `isFactsImage:false`。`Ingredients` 标签本身不能证明它是 Facts。
 5. 同一图片可以同时保留在普通商品画廊和 `facts_images`，除非用户明确要求把标签图从普通图片中排除。
 6. 请求 `main_ingredients` 时不能停在标题识别：继续读取面板内的主要/活性成分行和可见剂量，并调用 `finalizeFactsIngredientReview()`。
+7. 全部画廊候选处理完后调用 `finalizeGalleryReview(images, reviews)`；每个最终图片 URL 都必须有 `reviewedVisually:true` 与明确 Facts 判定。该函数生成 `_meta.galleryReview.status: "visual_complete"`、复核 URL 清单和 Facts 结论；不要手写状态绕过逐图检查。
 
 例：页面把第二张图的 `alt` 写成 `Activate Ingredients`，但放大后图片内部标题是 `Supplement Facts`。它应进入 `facts_images`，类型为 `Supplement Facts`，分类依据为 `visual_content`。
 
