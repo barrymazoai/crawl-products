@@ -1,13 +1,13 @@
 ---
 name: crawl-products
-description: "在 Codex App 连接的用户本地 Chrome 里用双遍流程爬取单品营养产品并学习可复用规则：首遍通过截图和视觉操作完整走通首页→目录→商品→每个请求字段（含滚动、标签、折叠区和画廊 Facts 图片），第二遍从入口重放并把整条旅程映射成 DOM selector、字段展开规则、网络请求和高清图证据，再把无字段值的站点 profile 持久化供下次直接复用；默认排除 Bundle/Pack/Kit 和非 Nutrition 商品，支持基于页面证据派生 form、health_function、main_ingredients，输出 Supply Smart product/enrich 接口可直接消费的数据，也支持经视觉验证的母公司→直属 Brand 一层组合和品牌目录→第三方商品详情链接。适用于抓品牌站/商城营养品、保健品 Facts 图片、产品用途语义、建立产品库、竞品选品和批量商品 URL 提取。"
+description: "在 Codex App 连接的用户本地 Chrome 里用双遍流程爬取单品营养产品并学习可复用规则：首遍通过截图和视觉操作确认完整目录族、分页/Load More、代表商品和每个请求字段（含画廊 Facts 图片），第二遍从入口重放并把整条旅程映射成 DOM selector、目录覆盖、字段展开规则、网络请求和高清图证据，再持久化无字段值的站点 profile；默认排除 Bundle/Pack/Kit 和非 Nutrition 商品，支持基于页面证据派生 form、health_function、main_ingredients，输出 Supply Smart product/enrich 接口可直接消费的数据，也支持经视觉验证的母公司→直属 Brand 一层组合和品牌目录→第三方商品详情链接。适用于抓品牌站/商城营养品、保健品 Facts 图片、产品用途语义、建立产品库、竞品选品和批量商品 URL 提取。"
 ---
 
 # 爬取产品目录
 
 这个 skill 把 `browserbase-worker` 的确定性爬取引擎放进 Codex App 连接的用户本地 Chrome 运行。核心原则是：
 
-1. **首轮严格走两遍**：第一遍只靠截图和视觉操作，从入口一直找到代表商品上的每个请求字段；第二遍回到入口正向重放，才读取 DOM、selector、Network 和 pageAssets。
+1. **首轮严格走两遍**：第一遍只靠截图和视觉操作，先确认完整目录族和分页，再走到代表商品上的每个请求字段；第二遍回到入口正向重放，才读取 DOM、selector、Network 和 pageAssets。
 2. **整条路线包括字段**：路线不是“到达详情页”就结束。标题、价格、描述、图片、成分、事实表在哪里，是否要滚动、切 tab 或展开 accordion，都是视觉路线的一部分。
 3. **没有未知站点自动发现**：执行层不再提供首页词表、sitemap、平台接口或 store-root 自动试探。没有有效 profile 时，必须先完成视觉路线；`crawlSite` 会硬性拒绝未映射路线。
 4. **视觉先证明，数据能力再解释**：第一遍不调用 DOM snapshot、locator、`evaluate`、CDP、sitemap 或平台枚举。截图坐标只在第二遍映射时临时使用，不能持久化。
@@ -68,7 +68,7 @@ globalThis.profileDir = globalThis.profileDir ?? `${nodeRepl.cwd}/.crawl-product
 
 若 `crawlProductsTab` 已关闭、失效或不属于当前 Chrome 会话，丢弃它并从现有 `crawlBrowser` 新建 tab。不要为恢复 tab 再调用 `agent.browsers.get*`。
 
-切换到另一个 origin 前，清空上一站临时的 `profile`、`imageProfile`、`cdpProfile` 和 `sample`；持久化规则由 `profileDir` 按 origin 加载，不能复用上一站内存变量。
+切换到另一个 origin 前，清空上一站临时的 `profile`、`imageProfile`、`cdpProfile` 和 `sample`；持久化规则由 `profileDir` 按 origin 加载，不能复用上一站内存变量。profile 是运行目录里的本地学习资产，不随 skill Git 仓库自动同步；换电脑复用时复制对应 origin 的 profile 或设置同步的 `profileDir`，否则按未知站点重新学习。
 
 浏览器操作抛错后先判断 tab 是否已污染；需要隔离时必须替换变量：
 
@@ -207,7 +207,9 @@ visualRoute.fieldJourney = {
 visualRoute.status = "visual_complete";
 ```
 
-导航每次成功前进只记录 `{pageRole, url, action: {text, targetUrl}}`。跨 origin 时还必须记录 `relationType`：`official_store_handoff`、`portfolio_brand_site` 或 `external_product_detail`。官方商城接力仍是一条品牌商品路线；品牌组合才进入 portfolio。可以读取 `tab.url()` 和 `tab.title()`，但这一遍禁止调用 DOM snapshot、locator、`evaluate`、CDP、sitemap、平台枚举或 pageAssets。截图和字段坐标是临时桥梁；第二遍映射完成后必须从持久化路线中丢弃。
+导航既记录 URL 前进，也记录同页菜单展开和分页状态变化。每个动作必须标明 `actionKind`：`navigation_reveal`、`catalog_entry`、`product_entry` 或 `pagination`。目录入口若截图上存在兄弟项，再标 `catalogCoverage: "siblings"`；真正只有一个入口才标 `"single"`。目录动作形状为 `{actionKind:"catalog_entry", catalogCoverage:"siblings", text, targetUrl}`。
+
+首页大类、展开后的子分类族都要各留一个代表动作；不能在 `Best Sellers` 等单页上看到商品就宣告目录完成。同页 `Load More` 用重复 URL 的相邻 `listing` step 和 `actionKind: "pagination"` 记录。跨 origin 时还要记录 `relationType`：`official_store_handoff`、`portfolio_brand_site` 或 `external_product_detail`。这一遍仍禁止 DOM snapshot、locator、`evaluate`、CDP、sitemap、平台枚举或 pageAssets；坐标在第二遍映射后丢弃。
 
 视觉路线至少包含入口、列表、代表商品和全部请求字段。点击只用于导航、滚动、展开或查看详情；不要点击加入购物车、结账、提交表单等有状态动作。
 
@@ -251,7 +253,7 @@ console.log({
 `replayVisualRoute` 会：
 
 1. 用动作文字和已知目标 URL 找回对应元素；
-2. 从被点击链接向上寻找重复商品卡祖先，只有组合 selector 命中多个不同商品 URL 才保存为 `repeated_cards`；真正只有一个商品时保存唯一 selector 和 `single_product`；
+2. 分开映射目录族、分页和商品卡：`listing→listing` 的分类动作不会再被当成商品卡；兄弟目录 URL 写入 `catalogCoverage.listingSeeds`，Load More 写入 `paginationActions`；
 3. 重放详情页滚动、tab 和 accordion，把 DOM 字段内容映射成 `targetSelector`；图片型 Facts 保存 `sourceKind: "gallery_image"` 并映射商品画廊，不要求 Zoom/modal 可用；同时保存 tag、唯一命中数、文本/图片/视频计数和语义信号；
 4. 由完整字段旅程生成 `detailProfile.fieldRules`、`fieldPolicy`、`interactionHints` 和图片 gallery hint；
 5. 在真实导航和关键揭示动作前开启 CDP Network，捕获导航、XHR 和 Fetch；字段映射阶段不反复读取图片资源；
@@ -266,9 +268,8 @@ console.log({
 从第二遍已经确认的列表页收集少量商品：
 
 ```js
-globalThis.listingSeeds = visualRoute.steps
-  .filter((step) => step.pageRole === "listing" || step.pageRole === "inline_catalog")
-  .map((step) => step.url);
+globalThis.listingSeeds = replay.visualRoute.catalogCoverage?.listingSeeds
+  ?? visualRoute.steps.filter((step) => ["listing", "inline_catalog"].includes(step.pageRole)).map((step) => step.url);
 globalThis.listing = await crawl.collectProductUrls(tab, listingSeeds, {
   maxItems,
   ...(listingProfile || {}),
@@ -389,7 +390,7 @@ console.log(crawl.summarize(result));
 `crawlSite` 会：
 
 1. 验证 v4 `visualRoute.status === "mapped"`，并确认每个请求字段都有完整 checkpoint 和有效语义质量证据；
-2. 用已映射分类 selector 扩展兄弟分类，再用已映射商品卡 selector 收集产品；
+2. 先使用已映射 `catalogCoverage` 的全部目录 seed，再回放分页/Load More 和商品卡 selector 收集产品；旧 profile 才用首页分类 selector 兼容扩展；
 3. 在候选 URL 阶段排除明显组合装和显式非营养商品；
 4. 后台批量抽取，并只按已学字段展开规则做慢速补采；
 5. 首轮未学 CDP 规则时只用 DOM 升级；复跑或显式启用后才执行已验证 CDP 规则；
@@ -398,7 +399,7 @@ console.log(crawl.summarize(result));
 
 不要在未知站点上一上来调用 `crawlSite` 代替视觉首遍。执行层没有自动发现兜底：只有已有有效 v4 profile，或已经完成 `replayVisualRoute`，才能进入批量阶段。v3 只能作为局部迁移输入，不能直接批量。`forceDiscovery` 已移除；不要再传。
 
-默认只有 1 张商品图也会进入画廊补采。连续 3 个商品没有新增时才停掉慢速补采。`minImagesBeforeGalleryUpgrade` 可调整门槛，`resolveOriginalImages: false` 可关闭原图恢复。
+fast path 只要已有 URL+标题或有效商品图，就保留 partial record 并同时进入慢速补采，不能因缺少某个请求字段把整条商品删除。慢速补采的连续失败只熔断相同缺失字段/图片签名；没有 fast baseline 的 URL 必须逐个尝试，其他模板继续运行。`minImagesBeforeGalleryUpgrade` 可调整图片升级门槛，`resolveOriginalImages: false` 可关闭原图恢复。
 
 只打印 `crawl.summarize(result)`，绝对不要打印 `result.records`。
 
@@ -477,7 +478,7 @@ console.log(exported.summary);
 | `Page.captureScreenshot` 超时 / 截图空白 | 浏览器执行错误；按截图规则重试或停止，不保存站点 unavailable observation |
 | `ERR_TIMED_OUT` / `ERR_CONNECTION_CLOSED` / TLS | 新 tab 重试一次并分类；短期 observation 可过期，不能替代 profile |
 | 跨 origin 价格不同 | 保留字段来源和 `_meta.fieldConflicts`，不要静默覆盖或合并成一个“权威价” |
-| `upgrade_disabled` | 连续页面没有改善；说明该字段/图片整站不可得 |
+| `upgrade_disabled` | 只跳过相同缺失签名的补采；partial baseline 仍保留，其他签名继续 |
 | 组合站抓错外域 | 降回 `same_site`，或使用 `explicit_allowlist` |
 
 ## 边界

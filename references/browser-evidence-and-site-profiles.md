@@ -127,6 +127,9 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
   "listingProfile": {
     "categoryLinkSelectors": ["header .catalog-link"],
     "productLinkSelectors": ["a.product-item-link"],
+    "paginationActions": [
+      { "action": "click", "selector": "button.load-more", "text": "Load more" }
+    ],
     "listingMode": "repeated_cards",
     "scrollListings": true,
     "listingScrollScreens": 10,
@@ -143,9 +146,13 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
         "url": "https://shop.example/",
         "templateFingerprint": "a1b2c3...",
         "action": {
+          "actionKind": "catalog_entry",
+          "catalogCoverage": "siblings",
           "text": "Shop",
           "targetUrl": "https://shop.example/collections/all",
-          "selector": "header a[href='/collections/all']"
+          "selector": "header a[href='/collections/all']",
+          "generalSelector": "header .catalog-link",
+          "generalSelectorSource": "repeated_navigation"
         }
       },
       {
@@ -153,6 +160,7 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
         "url": "https://shop.example/collections/all",
         "templateFingerprint": "d4e5f6...",
         "action": {
+          "actionKind": "product_entry",
           "text": "Example product",
           "targetUrl": "https://shop.example/products/example",
           "selector": "a[href='/products/example']",
@@ -166,6 +174,25 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
         "templateFingerprint": "f7d9c5..."
       }
     ],
+    "catalogCoverage": {
+      "status": "mapped",
+      "listingSeeds": [
+        "https://shop.example/collections/all",
+        "https://shop.example/collections/vitamins"
+      ],
+      "families": [
+        {
+          "sourceUrl": "https://shop.example/",
+          "sourcePageRole": "home",
+          "selector": "header .catalog-link",
+          "coverage": "siblings",
+          "listingUrls": [
+            "https://shop.example/collections/all",
+            "https://shop.example/collections/vitamins"
+          ]
+        }
+      ]
+    },
     "fieldJourney": {
       "status": "mapped",
       "pageUrl": "https://shop.example/products/example",
@@ -273,6 +300,9 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
 | `field_journey_not_mapped` / `field_journey_incomplete` | 导航部分 | 视觉定位缺失字段，再映射字段和揭示控件 |
 | `field_selector_collision` | 导航部分 | 重映冲突字段，选择字段内容叶子节点 |
 | `product_link_selector_missing` | 导航部分 | 从视觉点击链接向上找重复商品卡；小目录可标 `single_product` |
+| `catalog_family_missing` | 详情字段和已完成动作 | 回到对应截图状态，映射该级目录族 selector |
+| `catalog_sibling_coverage_incomplete` | 详情字段和已完成动作 | 截图显示有兄弟目录但只映射到一个 URL，不能开始批量 |
+| `pagination_selector_missing` | 目录和详情规则 | 重新映射视觉确认过的分页/Load More 控件 |
 | `cross_origin_relation_missing` | 各 origin 独立规则 | 视觉确认并标记跨域关系类型 |
 | `legacy_profile_quality_revalidation_required` | v3 discovery、listing、steps、窄 CDP 规则 | 只重映代表详情页字段/图片质量，升级为 v4 |
 | `version_mismatch` | 无 | 重新学习 |
@@ -286,10 +316,10 @@ template fingerprint 会移除脚本、样式、字段值、URL 和数字，只�
 首轮：
 
 ```text
-截图/CUA 纯视觉走到详情和全部请求字段
+截图/CUA 纯视觉确认每级目录族、分页，再走到详情和全部请求字段
 → 回入口
 → 带 DOM/CDP 观测正向重放完整旅程
-→ 学分类/商品/字段/展开/网络/图片规则
+→ 学目录覆盖/分页/商品/字段/展开/网络/图片规则
 → 限量验证
 → 全量
 → 保存
@@ -367,9 +397,9 @@ template fingerprint 会移除脚本、样式、字段值、URL 和数字，只�
 允许写入 profile：
 
 - 入口策略和列表 URL；
-- 视觉路线的页面角色、URL、动作文字、DOM selector 和结构指纹；
+- 视觉路线的页面角色、URL、动作类型、目录覆盖、DOM selector 和结构指纹；
 - 每个请求字段的可得性、字段 selector 和安全揭示控件 selector；
-- 商品卡 selector 和列表滚动规则；
+- 分类族、商品卡、分页/Load More selector 和列表滚动规则；
 - 官方品牌 origin 关系及其证据摘要；
 - selector、label alias、regex；
 - 图片容器/排除规则；

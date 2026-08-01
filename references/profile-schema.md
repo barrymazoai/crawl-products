@@ -91,6 +91,8 @@ detail profile 只能在截图首遍已经走到代表商品、视觉确认每�
 | `require_fallback` | 缺了就走浏览器升级重试 |
 | `allow_missing` | 缺了直接接受，记入 `missingFields` |
 
+fast path 缺 `require_fallback` 字段时，只要仍有 URL+标题或有效商品图，就保留 partial record 并进入浏览器升级；升级失败不能删除这条基本商品记录。连续失败熔断按相同缺失字段/图片签名隔离，不能用一个模板的失败截断其他商品族。
+
 ## interactionHints：抽取前的展开动作
 
 只有视觉字段旅程已经确认、第二遍已经映射的控件才能列在这里。执行层不会自己去搜索或点击页面上的其他控件（商品页上乱点可能加购物车）。
