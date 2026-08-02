@@ -400,13 +400,15 @@ template fingerprint 会移除脚本、样式、字段值、URL 和数字，只�
 
 缺少 `depth`/`parentOrigin` 的旧 v1 site entry 按直属 Brand 迁移；显式 `depth > 1` 或 parent 不匹配的 entry 拒绝。`maxDepth` 无论调用参数如何都固定为 `1`。
 
-母公司关系不使用 DOM 自动扫描。首轮只接受截图视觉确认后传入的直属 `verifiedSites`，每个 Brand 同时提供自己的 mapped route；复跑才读取 parent/brand profiles。Brand 的 route 可以通过 `official_store_handoff` 进入自己的商城，也可以通过 `external_product_detail` 到精确商品详情，但不得再次出现 `portfolio` 页面角色或 `portfolio_brand_site`。因此技术上跨多个 origin 仍可能是同一个 Brand 的商品路线，组织层级不会超过一层。
+母公司关系不使用 DOM 自动扫描。首轮只接受截图视觉确认后传入的直属 `verifiedSites`，每个 Brand 同时提供自己的 mapped route；复跑才读取 parent/brand profiles。用户给出的入口若无自有商品却有 Brand 候选，必须继续视觉验证这些候选；确认后自动进入一层 portfolio，无需用户再次授权，不能把父站的 0 商品当终态。Brand 的 route 可以通过 `official_store_handoff` 进入自己的商城，也可以通过 `external_product_detail` 到精确商品详情，但不得再次出现 `portfolio` 页面角色或 `portfolio_brand_site`。因此技术上跨多个 origin 仍可能是同一个 Brand 的商品路线，组织层级不会超过一层。
 
 作用域模式：
 
 - `same_site`：默认，只允许同一 registrable domain，包括 `shop.example.com`。
 - `verified_brand_sites`：允许视觉确认的外域品牌，但必须二次验证商品目录/店铺导航。
 - `explicit_allowlist`：只允许 `allowedOrigins` 中的外域。
+
+入口为无商品母公司且 `verifiedSites` 含外域直属 Brand 时，`crawlTarget()` 自动选择 `verified_brand_sites`；这不是无限扩域许可。`maxOrigins` 只是本轮成本上限，若还有确认 Brand 因上限未处理，结果必须为 `incomplete/portfolio_brand_limit_reached`，提高上限后从 checkpoint 继续。
 
 `followVerifiedExternalProductLinks` 不会把外域升级成可递归店铺。它只允许列表商品卡中已经出现、经过商品卡 selector 约束的精确外域详情 URL；外域根路径、品牌集合、分类页、Marketplace 和普通页脚链接继续排除。适用于品牌目录把每个“购买”按钮托管到同一第三方商店的情况。
 

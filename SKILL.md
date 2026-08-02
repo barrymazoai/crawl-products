@@ -18,7 +18,7 @@ description: "在 Codex App 连接的用户本地 Chrome 中，由模型用视�
 5. Facts/Ingredients 图片存在时，`mainIngredients` 优先从图片中读；网页 Zoom 点不开时，直接从 DOM、Network、CDP 或 page assets 取得图片资源后打开复核，不能因此终止产品。
 6. `productForm`、`healthFunctions` 和 `mainIngredients` 由模型结合页面证据推断；脚本只验证证据、置信度、taxonomy 和医疗声称安全，不用固定词表替代模型判断。严格输出里的每个 `mainIngredients` 项必须是 `{name, substance, form?, category}` 对象：`category → substance → form? → name`。纯字符串只能留在 partial 证据中，不能进入 API-ready 数据。
 7. 默认排除 Bundle、Pack、Kit、Stack、Set、Regimen、Duo/Trio、Multi-pack 及非 Nutrition 商品。排除必须保留原因。
-8. 母公司可展开到直属 Brand 一层；Brand 的官方商城接力仍属于同一层，不继续递归 Brand 下面的子品牌。
+8. 用户给出的入口官网若自身没有产品目录、但视觉确认存在官方直属 Brand，必须自动展开这些 Brand 一层；这属于原请求范围，不需要用户另行说“抓母公司”。Brand 的官方商城接力仍属于同一层，不继续递归 Brand 下面的子品牌。
 9. profile 只保存可复用方法，不保存 Cookie、请求头、响应体或商品字段值。失败的假设不能保存成已验证规则。
 10. 最终接口数据必须使用 `lib/enrich-product-output.mjs` 生成，并符合当前 [enrich-product-output.md](references/enrich-product-output.md)。
 11. “没有继续找到”不等于完成。每个目录入口必须同时有视觉分页证明和本轮耗尽报告；`maxItems`、页数上限、浏览器超时、抓取失败、URL 循环或未映射分页都只能得到 `incomplete`。
@@ -65,7 +65,7 @@ globalThis.productOutput = globalThis.productOutput
 globalThis.profileDir ??= `${nodeRepl.cwd}/.crawl-products/profiles`;
 ```
 
-开始前明确：入口 URL、数量上限、是否要 API-ready、站点范围、是否允许一层 portfolio。营养品 API 任务默认：
+开始前明确：入口 URL、数量上限、是否要 API-ready 和商品范围。一层 portfolio 是空产品官网的默认接力行为，不作为额外授权问题。营养品 API 任务默认：
 
 ```js
 globalThis.sourceFields = [
@@ -86,6 +86,7 @@ globalThis.productScope = "nutrition_single_products";
 ### 1. 观察
 
 - 导航入口并截图，识别店铺、目录、国家选择、母公司、单页目录、challenge、错误页和弹层。
+- 首屏和导航完整检查官网自身是否有商品；若没有，继续视觉检查 Our Brands/Brands/Portfolio/品牌 Logo 网格及其官方跳转。Brand 候选存在时当前站不是终态。
 - 用视觉找到完整目录族、分类层级、分页/Load More、代表商品、详情全部区域和画廊。
 - 不要因为 `Best Sellers`、单一分类或当前可视的 20 个卡片就宣布完整目录。
 - 首遍某一步看不清时，继续通过截图、滚动、关闭遮罩、切换可见 tab/accordion 或更换干净 tab 判断；不能提前用 DOM/CDP 猜出一条路线再把它包装成视觉发现。
@@ -97,6 +98,7 @@ globalThis.productScope = "nutrition_single_products";
 - 路径清晰且 profile 有效：快速重放。
 - 页面结构变动、字段覆盖异常、批量失败同质化、只有缩略图或语义为空：暂停批量，重新截图定位代表模板。
 - 同站有多种产品模板/分类族：按差异选多个代表样本，不局限一个商品。
+- 官网 0 商品但存在 Brand 候选：逐个打开验证直属官方 Brand/商城关系，生成 `verifiedSites` 和各 Brand 的 `sitePlans`，然后进入 portfolio；不能以“当前域名无商品”结束。
 - 列表没有真实详情页：确认它确实是 inline catalog 后保留 inline 记录；若卡片含 href，必须先把 href 当详情候选。
 - 模型可以调整批次大小、等待方式、重试策略、是否替换 tab、是否启用 CDP/Network，以及要检查多少代表样本。
 
@@ -105,6 +107,7 @@ globalThis.productScope = "nutrition_single_products";
 可按情况组合以下原语，不要求必须调用某个黑盒：
 
 - `captureVisualScreenshot()`：视觉侦查和异常复核。
+- `classifySiteOutcome()` / `crawlTarget()`：封存入口角色并统一调度普通商城、官方商城接力或一层 portfolio。未知入口不要直接调用 `crawlSite()`。
 - `replayVisualRoute()`：把视觉走通的动作倒映射为 selector、字段展开、画廊和网络规则。
 - `collectProductUrls()`：在已确认 listing seeds 上回放卡片和分页规则。
 - `extractProductsBatch()`：批量获取详情页面证据。
@@ -160,7 +163,31 @@ globalThis.productScope = "nutrition_single_products";
 
 ## 目录覆盖与一层 portfolio
 
-普通站点默认 `same_site`。只有用户要求集团/母公司产品时才展开视觉确认的直属 Brand；深度固定为 1。官网到同 Brand 官方商城是 handoff，不增加品牌层级。
+普通店铺使用 `same_site`。若用户给出的官网自身没有商品目录，但存在视觉确认的直属 Brand 链接，默认展开这些 Brand，深度固定为 1；无需再问用户。官网到同 Brand 官方商城是 handoff，不增加品牌层级。
+
+入口必须先截图分类，再统一通过 `crawlTarget()` 调度：
+
+```js
+const entryOutcome = crawl.classifySiteOutcome({
+  productCount: visuallyConfirmedOwnProductCount,
+  officialStoreUrl: visuallyConfirmedOfficialStoreUrl,
+  portfolioOrigins: verifiedSites.map((site) => site.origin),
+});
+
+const result = await crawl.crawlTarget(crawlBrowser, tab, startUrl, {
+  entryOutcome,
+  verifiedSites,
+  sitePlans,
+  fields: sourceFields,
+  maxItems,
+  productScope,
+  profileDir,
+});
+```
+
+若只找到 Brand 候选、尚未确认关系，把候选传为 `brandCandidates`；`crawlTarget()` 会返回/抛出 `direct_brand_candidates_require_visual_verification`，要求继续视觉验证，而不是生成 0 商品终态。已验证 Brand 即使与初步 `service_or_out_of_scope` 判断冲突，也强制升级为非终态 `portfolio`。
+
+`maxOrigins` 只限制本轮 Brand 数量；命中后结果为 `incomplete/portfolio_brand_limit_reached`，不能把未处理 Brand 当排除项。外域直属 Brand 经视觉验证后自动使用 `verified_brand_sites`，但仍禁止继续递归其子品牌。
 
 第三方详情仅在品牌商品卡明确给出精确购买/详情链接时跟随；不递归第三方根目录、Marketplace 或下一层品牌。每个 origin 独立保存 profile。
 
@@ -204,10 +231,13 @@ catalogCoverage: {
 
 ## 批量、恢复与完成状态
 
-`crawlSite()` 是已验证规则的快速组合路径，不是唯一执行方式。调用示例：
+`crawlTarget()` 是用户入口的唯一顶层调度器；`crawlSite()` 只用于已确认的普通商城或 portfolio 内部 Brand。已验证普通站点的底层调用示例：
 
 ```js
-globalThis.result = await crawl.crawlSite(crawlBrowser, tab, startUrl, {
+globalThis.result = await crawl.crawlTarget(crawlBrowser, tab, startUrl, {
+  entryOutcome,
+  verifiedSites,
+  sitePlans,
   fields: sourceFields,
   maxItems,
   productScope,

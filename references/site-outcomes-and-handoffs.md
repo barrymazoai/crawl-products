@@ -2,6 +2,8 @@
 
 视觉首遍先按屏幕判断站点结果，再决定是否继续。不要把“没有找到商品”统一解释为网站不可访问。
 
+用户给出的官网若无自有产品，但包含官方直属 Brand，是路由入口而不是 0 商品终态。该一层 Brand 接力属于原始“抓这个网站产品”的范围，不需要用户额外声明集团/母公司模式。
+
 ## 站点结果
 
 `classifySiteOutcome` 使用这些结果：
@@ -16,6 +18,18 @@
 | `parked` | 停放/出售域名 | 终止并汇报 |
 | `challenge` | CAPTCHA/Cloudflare 等 | 停止，不反复撞 |
 | `access_error` | 页面级网络/TLS/HTTP 错误 | 新 tab 最多重试一次后分类 |
+
+## 入口调度
+
+未知入口一律先截图，再调用 `classifySiteOutcome()` 和 `crawlTarget()`；不要直接从入口调用 `crawlSite()`：
+
+1. 有自有商品目录 → `storefront`，抓当前站。
+2. 无自有目录、只有一个同品牌官方商城 → `official_store_handoff`，沿同一品牌路线继续。
+3. 无自有目录、存在多个或一个直属官方 Brand → `portfolio`，抓取全部视觉确认的直属 Brand 一层。
+4. 只发现 Brand 候选但尚未验证 → `needs_brand_verification`，继续打开链接、截图确认官方关系；不能输出 0 商品结果。
+5. 只有在没有自有目录、没有官方商城、没有 Brand 候选，并有明确页面证据时，才使用真正 terminal 结果。
+
+`resolveEntryCrawlPlan()` 会用 `verifiedSites` 覆盖错误的空站判断。例如父站最初被标成 `service_or_out_of_scope`，但随后确认了直属 Brand，最终计划必须是 `portfolio/terminal:false`。`crawlTarget()` 再调用 `crawlPortfolio()`；每个 Brand 必须提供独立 `sitePlans` 或可复用 profile。任何 Brand 未映射、失败或未完成都会让总任务保持 `incomplete`，但不会阻止继续处理其余 Brand。
 
 ## 访问错误
 
