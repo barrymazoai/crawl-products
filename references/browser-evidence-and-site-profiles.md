@@ -182,6 +182,18 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
         "https://shop.example/collections/all",
         "https://shop.example/collections/vitamins"
       ],
+      "listings": [
+        {
+          "url": "https://shop.example/collections/all",
+          "paginationMode": "click",
+          "verifiedVisually": true
+        },
+        {
+          "url": "https://shop.example/collections/vitamins",
+          "paginationMode": "none",
+          "verifiedVisually": true
+        }
+      ],
       "families": [
         {
           "sourceUrl": "https://shop.example/",
@@ -193,7 +205,12 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
             "https://shop.example/collections/vitamins"
           ]
         }
-      ]
+      ],
+      "closure": {
+        "status": "complete",
+        "verifiedVisually": true,
+        "basis": "navigation_exhausted"
+      }
     },
     "fieldJourney": {
       "status": "mapped",
@@ -304,6 +321,9 @@ Document 响应解决客户端或工具输出被截断的问题；DOM 解决交�
 | `product_link_selector_missing` | 导航部分 | 从视觉点击链接向上找重复商品卡；小目录可标 `single_product` |
 | `catalog_family_missing` | 详情字段和已完成动作 | 回到对应截图状态，映射该级目录族 selector |
 | `catalog_sibling_coverage_incomplete` | 详情字段和已完成动作 | 截图显示有兄弟目录但只映射到一个 URL，不能开始批量 |
+| `catalog_coverage_not_mapped` / `catalog_closure_not_proven` | 详情字段与已有入口 | 回到入口用截图确认完整目录边界；不能把单个 Best Sellers 页当全站 |
+| `catalog_listing_seeds_missing` | 详情字段 | 补齐全部 listing seed；只有视觉证明的单产品目录可没有 listing |
+| `catalog_listing_pagination_unverified` | 已映射入口与详情字段 | 逐 seed 视觉确认 `none/link/click/scroll`；“没找到分页”不能直接填 `none` |
 | `pagination_selector_missing` | 目录和详情规则 | 重新映射视觉确认过的分页/Load More 控件 |
 | `cross_origin_relation_missing` | 各 origin 独立规则 | 视觉确认并标记跨域关系类型 |
 | `legacy_profile_quality_revalidation_required` | v3 discovery、listing、steps、窄 CDP 规则 | 只重映代表详情页字段/图片质量，升级为 v4 |

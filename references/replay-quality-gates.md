@@ -14,6 +14,17 @@
 
 不能证明重复卡片时，不得把普通导航类名伪装成商品卡 selector。若视觉已经证明目录只有一个商品，可以保存唯一精确链接并标记 `listingMode: "single_product"`。同页多个商品没有独立详情 URL 时使用 `inline_catalog`。
 
+### 目录闭环和分页证明
+
+映射成功不等于本轮耗尽。批量前 `catalogCoverage` 必须同时具有：
+
+- `closure.status:"complete"`、`verifiedVisually:true` 和合法 `basis`；
+- 全部视觉确认的 listing seeds；
+- 每个 seed 的 `paginationMode:"none|link|click|scroll"` 和 `verifiedVisually:true`；
+- sibling 目录族的完整 selector/URL 集合。
+
+运行后 `collectProductUrls().coverage.seedReports[]` 必须逐 seed 为 `complete`。只有视觉证明为 `none` 才能以单页结束；点击型分页必须有映射动作并看到控件耗尽；滚动型分页必须连续稳定。`max_items_reached`、`max_pages_reached`、`pagination_mapping_missing`、`listing_fetch_failed`、循环 URL 和滚动上限均为可恢复的 incomplete，不能晋级 profile 或结束任务。
+
 ## 字段 selector
 
 每个非 `not_present` 字段都要保存无字段值的 `quality`：

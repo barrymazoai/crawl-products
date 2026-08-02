@@ -118,15 +118,28 @@ const exported = await productOutput.writeEnrichProductExport(
   {
     processedAt: new Date().toISOString(),
     updateExisting: false,
+    runCompletion: result.completion,
     // domain: "example.com",
     // domainByOrigin: { "shop.example.com": "example.com" },
   },
 );
 ```
 
-默认是严格导出：缺真实 `productUrl`、至少一张图片、`galleryReview.status:"visual_complete"`、DOM+画廊 Facts source review、`productForm`、`healthFunctions`、`mainIngredients`、对应语义证据，或存在缺 `substance/category` 的主成分时，记录进入错误文件，不进入 API-ready 请求。有多张 Facts 图时必须逐张完成成分复核。只有用户明确要 inventory/partial 时才传 `allowPartial:true`。
+默认是严格导出：缺真实 `productUrl`、至少一张图片、`galleryReview.status:"visual_complete"`、DOM+画廊 Facts source review、`productForm`、`healthFunctions`、`mainIngredients`、对应语义证据，或存在缺 `substance/category` 的主成分时，记录进入错误文件。有多张 Facts 图时必须逐张完成成分复核。
 
-固定产物：
+正式产物采用批次级全有或全无。只有 `runCompletion.status === "complete"` 且所有输入记录均通过时才生成 `products.json`、`product-enrich-requests.*` 和 CSV。若整次目录/详情任务未结案、遗漏 `runCompletion` 或任一记录失败，只生成 `api-ready-candidates.json`、`crawl-records.json`、错误文件和 `enrich-export-report.json`；候选文件不是可提交结果。
+
+`allowPartial` 已移除。用户明确要求中间库存时使用独立模式：
+
+```js
+await productOutput.writeEnrichProductExport(outDir, records, {
+  outputMode: "inventory_partial",
+});
+```
+
+该模式只生成 `inventory-partial.json`、原始 records、错误和报告，固定标记 `completionStatus:"incomplete"`，不会生成任何 API 请求文件。
+
+整批成功时的固定产物：
 
 - `products.json`：主要最终数据；数组内每项都是完整 `{"json": input}` envelope。
 - `product-enrich-inputs.json`：API 内层 `input[]`，仅供调试或分析。
@@ -144,7 +157,7 @@ const exported = await productOutput.writeEnrichProductExport(
 提交前必须满足：
 
 1. `inputsReady + errors === recordsReceived`。
-2. `product-enrich-errors.json` 为空，或失败记录已经单独解释。
+2. `product-enrich-errors.json` 必须为空；失败记录只能留在 incomplete 候选导出，不能一边解释一边生成正式批次。
 3. 每个 `domain` 是目标数据库中的公司匹配域名，每个 `productUrl` 是真实详情 URL。
 4. `galleryReview.status` 为 `visual_complete`，且 `reviewed_image_urls` 覆盖最终 `images` 的每个 URL；`images` 包含完整画廊、可取得的最佳直接 CDN/原图和经视觉确认的 Facts 图片，推测的原图已经过真实浏览器 MIME/尺寸验证；否则 review 必须明确说明只有一张可用图或原图候选为什么被拒绝。
 5. `factsSourceReview.status` 为 `complete`，并同时证明页面 DOM/Table/accordion 与画廊两种来源都已检查；二者均允许记录 `not_present`，但不能省略检查。
@@ -152,3 +165,4 @@ const exported = await productOutput.writeEnrichProductExport(
 7. `productForm`、每个 `healthFunctions` 和每个 `mainIngredients` 都能在 `_meta.semanticInferences` 找到 high/medium confidence、证据、basis，以及 inferred 值所需的 rationale。
 8. taxonomy 对象的 `category` 属于固定 12 类，`form/category` 都有 `substance`。
 9. 只有用户明确授权提交时，才逐行 POST `product-enrich-requests.jsonl`。
+10. `runCompletion.status` 为 `complete`，且其目录 seed、分页耗尽、详情队列和失败队列均已结案；不能只把通过校验的记录子集传给导出器。

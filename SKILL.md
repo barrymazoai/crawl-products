@@ -21,6 +21,8 @@ description: "在 Codex App 连接的用户本地 Chrome 中，由模型用视�
 8. 母公司可展开到直属 Brand 一层；Brand 的官方商城接力仍属于同一层，不继续递归 Brand 下面的子品牌。
 9. profile 只保存可复用方法，不保存 Cookie、请求头、响应体或商品字段值。失败的假设不能保存成已验证规则。
 10. 最终接口数据必须使用 `lib/enrich-product-output.mjs` 生成，并符合当前 [enrich-product-output.md](references/enrich-product-output.md)。
+11. “没有继续找到”不等于完成。每个目录入口必须同时有视觉分页证明和本轮耗尽报告；`maxItems`、页数上限、浏览器超时、抓取失败、URL 循环或未映射分页都只能得到 `incomplete`。
+12. `allowPartial` 已移除。中间库存必须显式使用 `outputMode:"inventory_partial"`，且只能写 `inventory-partial.json`；只有整次任务 `runCompletion.status:"complete"` 且所有记录均通过时才生成 `products.json` 和可提交请求文件。
 
 ## 浏览器
 
@@ -72,6 +74,8 @@ globalThis.sourceFields = [
 globalThis.maxItems = 200;
 globalThis.productScope = "nutrition_single_products";
 ```
+
+`maxItems` 是本轮成本上限，不是目录大小推断。命中上限后状态必须是 `incomplete/product_limit_reached`；用户要全量时提高上限并从 checkpoint 继续，直到所有入口耗尽。
 
 `facts_images`、`form`、`health_function`、`main_ingredients` 是详情取证后的视觉/语义阶段，不要把它们当成普通 DOM 字段盲跑。
 
@@ -160,7 +164,26 @@ globalThis.productScope = "nutrition_single_products";
 
 第三方详情仅在品牌商品卡明确给出精确购买/详情链接时跟随；不递归第三方根目录、Marketplace 或下一层品牌。每个 origin 独立保存 profile。
 
-完整目录的完成条件：所有视觉确认的分类族均有 listing seed，分页/Load More 已耗尽或达到用户上限，去重后的详情 URL 数稳定，并且不是只抓当前一个页面。
+批量前必须给 `catalogCoverage` 保存显式闭环证明。每个 listing seed 都要标记视觉确认的分页方式 `none|link|click|scroll`；`none` 只能表示视觉确认确实是单页，不能表示“没找到按钮”。目录闭环的 `basis` 只能是 `navigation_exhausted`、`single_listing_catalog` 或 `single_product_catalog`。示例：
+
+```js
+catalogCoverage: {
+  status: "mapped",
+  listingSeeds: [vitaminsUrl, proteinUrl],
+  families: [...],
+  listings: [
+    { url: vitaminsUrl, paginationMode: "click", verifiedVisually: true },
+    { url: proteinUrl, paginationMode: "none", verifiedVisually: true },
+  ],
+  closure: {
+    status: "complete",
+    verifiedVisually: true,
+    basis: "navigation_exhausted",
+  },
+}
+```
+
+运行时 `collectProductUrls()` 为每个 seed 返回 `coverage.seedReports[]`。只有全部 seed 都是 `complete` 才算目录完成；`pagination_mapping_missing`、`max_items_reached`、`max_pages_reached`、`listing_fetch_failed`、`listing_scroll_limit_reached` 等状态必须保存 checkpoint 并恢复。达到用户上限也不是完整目录证明。
 
 ## 画廊、Facts 与语义
 
@@ -202,6 +225,8 @@ console.log(crawl.summarize(result));
 
 `recordsExtracted` 是库存数；查看 `recordsComplete`、`recordsPartial` 和 `reviewQueue` 判断详情是否完成。不要因为 inventory 有 202 条就声称 202 条均已提取。
 
+同时检查顶层 `result.completion`。只有 `result.completion.status === "complete"` 才能结束或传给正式导出；否则按 `completion.catalog.seedReports`、`remainingProductDetails` 和 `reasons` 从 checkpoint 继续。portfolio 任务要求每个直属 Brand 的站点都完成，任何子站 incomplete 都使总任务 incomplete。
+
 遇到连续失败时，先抽查错误产品截图和 DOM/Network，判断是统一模板问题、另一模板族、tab 污染、限流还是字段确实不存在。只有用户明确接受成本截断时才设置 `disableAfter`；被跳过的条目仍是 review，不是成功。
 
 ## API-ready 导出
@@ -215,11 +240,12 @@ const exported = await productOutput.writeEnrichProductExport(
   {
     processedAt: new Date().toISOString(),
     updateExisting: false,
+    runCompletion: result.completion,
   },
 );
 ```
 
-固定产物：
+整批成功时的固定产物：
 
 - `products.json`：主要最终数据，数组内每项都是完整 `{"json": input}`。
 - `product-enrich-inputs.json`：仅内层 input 的调试/分析文件。
@@ -229,7 +255,17 @@ const exported = await productOutput.writeEnrichProductExport(
 - `product-enrich-errors.json`：任何缺失项及原因。
 - `enrich-export-report.json`：收到、可提交和失败数。
 
-严格模式会拒绝缺真实 `productUrl`、图片、gallery review、DOM+画廊 Facts source review、form、health functions、main ingredients、对应的模型语义证据，或任何缺 `substance/category` 的主成分。若有多张 Facts 图，每张都必须有成分视觉复核记录。只有用户明确要求 partial/inventory 输出时才传 `allowPartial:true`，并明确标注它不能直接当成完成数据提交。
+严格模式会拒绝缺真实 `productUrl`、图片、gallery review、DOM+画廊 Facts source review、form、health functions、main ingredients、对应的模型语义证据，或任何缺 `substance/category` 的主成分。若有多张 Facts 图，每张都必须有成分视觉复核记录。正式导出是批次级全有或全无：`runCompletion` 缺失/incomplete 或任一记录失败时，只写 `api-ready-candidates.json`、原始证据、错误和报告，不生成 `products.json` 或请求文件。
+
+只有用户明确要求中间库存时才使用：
+
+```js
+await productOutput.writeEnrichProductExport(outDir, records, {
+  outputMode: "inventory_partial",
+});
+```
+
+此模式固定为 `completionStatus:"incomplete"`，不能提交接口，也不能在汇报中称为完整产品。
 
 `domain` 默认使用公司可注册域名，例如 `us.shaklee.com` → `shaklee.com`；数据库使用特殊公司域名时通过 `domain` 或 `domainByOrigin` 显式覆盖。`productUrl` 始终保留完整详情 URL。
 
