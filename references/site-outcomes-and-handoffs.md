@@ -31,6 +31,10 @@
 
 `resolveEntryCrawlPlan()` 会用 `verifiedSites` 覆盖错误的空站判断。例如父站最初被标成 `service_or_out_of_scope`，但随后确认了直属 Brand，最终计划必须是 `portfolio/terminal:false`。`crawlTarget()` 再调用 `crawlPortfolio()`；每个 Brand 必须提供独立 `sitePlans` 或可复用 profile。任何 Brand 未映射、失败或未完成都会让总任务保持 `incomplete`，但不会阻止继续处理其余 Brand。
 
+## 多入口任务
+
+用户一次给出多个入口时，调用 `crawlTargets()` 建立批次状态机。它必须逐个运行所有去重后的 URL；第一个入口 `complete` 不得结束任务，后续入口的 checkpoint、异常或待视觉验证必须保留在对应 `siteResults`，同时继续尝试其他 URL。批次只有在每个入口均为 `complete` 或有证据的 `terminal` 时才是 `completion.status:"complete"`；否则返回 `incomplete` 和 `remainingSites`，正式导出必须等待批次恢复完成。
+
 ## 访问错误
 
 使用 `classifyBrowserAccessError(error, pageEvidence)`：

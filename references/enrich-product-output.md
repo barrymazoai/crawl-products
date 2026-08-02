@@ -127,7 +127,7 @@ const exported = await productOutput.writeEnrichProductExport(
 
 默认是严格导出：缺真实 `productUrl`、至少一张图片、`galleryReview.status:"visual_complete"`、DOM+画廊 Facts source review、`productForm`、`healthFunctions`、`mainIngredients`、对应语义证据，或存在缺 `substance/category` 的主成分时，记录进入错误文件。有多张 Facts 图时必须逐张完成成分复核。
 
-正式产物采用批次级全有或全无。只有 `runCompletion.status === "complete"` 且所有输入记录均通过时才生成 `products.json`、`product-enrich-requests.*` 和 CSV。若整次目录/详情任务未结案、遗漏 `runCompletion` 或任一记录失败，只生成 `api-ready-candidates.json`、`crawl-records.json`、错误文件和 `enrich-export-report.json`；候选文件不是可提交结果。
+正式产物采用批次级全有或全无。只有 `runCompletion.status === "complete"` 且所有输入记录均通过时才生成 `products.json`、`product-enrich-requests.*` 和 CSV。多网站任务必须传入 `crawlTargets()` 返回的整批 completion；单站 `complete` 或已保存 checkpoint 不能替代整批 completion。若整次目录/详情任务未结案、遗漏 `runCompletion` 或任一记录失败，只生成 `api-ready-candidates.json`、`crawl-records.json`、错误文件和 `enrich-export-report.json`；候选文件不是可提交结果。
 
 `allowPartial` 已移除。用户明确要求中间库存时使用独立模式：
 

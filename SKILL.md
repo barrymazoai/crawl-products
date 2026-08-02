@@ -23,6 +23,7 @@ description: "在 Codex App 连接的用户本地 Chrome 中，由模型用视�
 10. 最终接口数据必须使用 `lib/enrich-product-output.mjs` 生成，并符合当前 [enrich-product-output.md](references/enrich-product-output.md)。
 11. “没有继续找到”不等于完成。每个目录入口必须同时有视觉分页证明和本轮耗尽报告；`maxItems`、页数上限、浏览器超时、抓取失败、URL 循环或未映射分页都只能得到 `incomplete`。
 12. `allowPartial` 已移除。中间库存必须显式使用 `outputMode:"inventory_partial"`，且只能写 `inventory-partial.json`；只有整次任务 `runCompletion.status:"complete"` 且所有记录均通过时才生成 `products.json` 和可提交请求文件。
+13. 用户一次提供多个网站时，这是一个批次任务，不是“任选一个站点试跑”。必须为每个去重后的入口建立状态，并继续到全部入口都为 `complete` 或有证据的 `terminal`；任一站点仍是 checkpoint、partial、失败或待视觉验证，整批只能是 `incomplete`，不能提前汇报完成，也不能生成正式批次导出。
 
 ## 浏览器
 
@@ -65,7 +66,7 @@ globalThis.productOutput = globalThis.productOutput
 globalThis.profileDir ??= `${nodeRepl.cwd}/.crawl-products/profiles`;
 ```
 
-开始前明确：入口 URL、数量上限、是否要 API-ready 和商品范围。一层 portfolio 是空产品官网的默认接力行为，不作为额外授权问题。营养品 API 任务默认：
+开始前明确：入口 URL（一个或多个）、数量上限、是否要 API-ready 和商品范围。一层 portfolio 是空产品官网的默认接力行为，不作为额外授权问题。多个入口必须作为一个任务清单处理。营养品 API 任务默认：
 
 ```js
 globalThis.sourceFields = [
@@ -73,6 +74,7 @@ globalThis.sourceFields = [
 ];
 globalThis.maxItems = 200;
 globalThis.productScope = "nutrition_single_products";
+globalThis.sourceUrls = globalThis.sourceUrls || ["<用户提供的入口 URL>"];
 ```
 
 `maxItems` 是本轮成本上限，不是目录大小推断。命中上限后状态必须是 `incomplete/product_limit_reached`；用户要全量时提高上限并从 checkpoint 继续，直到所有入口耗尽。
@@ -101,6 +103,7 @@ globalThis.productScope = "nutrition_single_products";
 - 官网 0 商品但存在 Brand 候选：逐个打开验证直属官方 Brand/商城关系，生成 `verifiedSites` 和各 Brand 的 `sitePlans`，然后进入 portfolio；不能以“当前域名无商品”结束。
 - 列表没有真实详情页：确认它确实是 inline catalog 后保留 inline 记录；若卡片含 href，必须先把 href 当详情候选。
 - 模型可以调整批次大小、等待方式、重试策略、是否替换 tab、是否启用 CDP/Network，以及要检查多少代表样本。
+- 用户给出多个入口时，不能因第一个站点成功、某个站点无商品或某个站点需要恢复而停止；保存当前站点 checkpoint 后继续下一个入口，最后回到所有 `incomplete` 站点恢复。
 
 ### 3. 行动
 
@@ -252,6 +255,27 @@ globalThis.result = await crawl.crawlTarget(crawlBrowser, tab, startUrl, {
 });
 console.log(crawl.summarize(result));
 ```
+
+如果用户提供多个网站，必须把它们交给 `crawlTargets()`，不要在第一个 `crawlTarget()` 返回后结束：
+
+```js
+globalThis.result = await crawl.crawlTargets(
+  crawlBrowser,
+  tab,
+  sourceUrls,
+  {
+    fields: sourceFields,
+    maxItems,
+    productScope,
+    profileDir,
+    siteOptions, // 可按完整 URL 或 origin 提供每站 route/profile
+    onProgress: async (progress) => persistTaskCheckpoint(progress),
+  },
+);
+console.log(crawl.summarize(result));
+```
+
+`crawlTargets()` 会顺序尝试每个唯一入口，即使前一个已经 `complete`，也会继续后面的入口；单站异常会记录为该站 `incomplete` 并继续其余站点。它返回 `completion.totalSites`、`sitesComplete`、`sitesTerminal`、`sitesIncomplete` 和 `remainingSites`。只有批次 `result.completion.status === "complete"` 才能结束任务；单站 `complete`、中间 `inventory_partial` 或“已保存 checkpoint”都不是批次完成。批次恢复时先处理 `remainingSites`，不能只导出已经完成的站点并把它称为用户要求的全量结果。
 
 `recordsExtracted` 是库存数；查看 `recordsComplete`、`recordsPartial` 和 `reviewQueue` 判断详情是否完成。不要因为 inventory 有 202 条就声称 202 条均已提取。
 
