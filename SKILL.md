@@ -1,6 +1,6 @@
 ---
 name: crawl-products
-description: "在 Codex App 连接的用户本地 Chrome 中，由模型用视觉优先的自适应循环发现并验证完整营养品目录、详情字段、全部画廊与 Facts 图片，再按需映射 DOM/CDP/Network 规则并持久化复用；默认排除综合多品牌零售卖场、Bundle/Pack/Kit 与非营养商品，支持母公司到直属 Brand 一层、证据驱动的 form/healthFunctions/mainIngredients 推断，以及 Supply Smart product/enrich 严格格式导出。适用于品牌站、品牌自营商城、营养品目录、Facts 图片、语义补全、完整商品 URL 和批量产品数据抓取。"
+description: "在 Codex App 连接的本地 Chrome 或 Codex In-App Browser 中，由模型用视觉优先的自适应循环发现并验证完整营养品目录、详情字段、全部画廊与 Facts 图片，再按需映射 DOM/CDP/Network 规则并持久化复用；默认排除综合多品牌零售卖场、Bundle/Pack/Kit 与非营养商品，支持母公司到直属 Brand 一层、证据驱动的 form/healthFunctions/mainIngredients 推断、In-App Browser 多任务隔离和 Supply Smart product/enrich 严格格式导出。适用于品牌站、品牌自营商城、营养品目录、Facts 图片、语义补全、完整商品 URL 和批量产品数据抓取。"
 ---
 
 # 自适应爬取营养产品
@@ -31,7 +31,9 @@ description: "在 Codex App 连接的用户本地 Chrome 中，由模型用视�
 
 ## 浏览器
 
-默认使用 `chrome:control-chrome` 连接用户已打开的本地 Chrome。先完整读取该 Skill 的 `SKILL.md`，再建立独立绑定：
+`browserMode` 决定浏览器表面：默认是 `"extension"`，连接用户本地 Chrome；公开站点的多任务并发可以显式选择 `"iab"`，使用 Codex In-App Browser。用户明确选择某个浏览器时，该选择是硬约束，不能静默切换。
+
+外部 Chrome（`browserMode: "extension"`）先完整读取 `chrome:control-chrome` 的 `SKILL.md`，再建立独立绑定：
 
 ```js
 if (globalThis.chrome == null) {
@@ -40,11 +42,24 @@ if (globalThis.chrome == null) {
   nodeRepl.write(await chrome.documentation());
 }
 globalThis.crawlBrowser = globalThis.chrome;
-globalThis.crawlProductsTab ??= await crawlBrowser.tabs.new();
-globalThis.tab = globalThis.crawlProductsTab;
+globalThis.crawlProductsExtensionTab ??= await crawlBrowser.tabs.new();
+globalThis.tab = globalThis.crawlProductsExtensionTab;
 ```
 
-不要静默改用 Codex in-app Browser、外部 Playwright 或独立浏览器服务。只有用户明确选择 in-app Browser，或 Chrome 不可用后明确同意切换，才使用 `browser:control-in-app-browser`。
+In-App Browser（`browserMode: "iab"`）先完整读取 `browser:control-in-app-browser` 的 `SKILL.md`，再建立独立绑定：
+
+```js
+if (globalThis.iab == null) {
+  globalThis.iab = await agent.browsers.get("iab");
+  await iab.nameSession("🔎 crawl-products <site>");
+  nodeRepl.write(await iab.documentation());
+}
+globalThis.crawlBrowser = globalThis.iab;
+globalThis.crawlProductsIabTab ??= await crawlBrowser.tabs.new();
+globalThis.tab = globalThis.crawlProductsIabTab;
+```
+
+`iab` 不是用户 Chrome 的登录态、Cookie、Clash 路由或 Profile 的替身；公开站点优先使用它做隔离并发，登录/代理/本地状态依赖仍使用 extension。显式选择 `iab` 后若遇到 `blocked_by_browser_url_policy`、challenge 或网络失败，必须记录并报告，不能偷偷切换到 extension。
 
 Full CDP 按 origin 授权；被拒绝时继续使用截图和 DOM，并说明需要授权的能力。`blocked_by_browser_url_policy` 是浏览器执行面限制，不是站点不可访问证据。
 
@@ -58,7 +73,7 @@ if (crawl.shouldDiscardBrowserTab(error)) {
 }
 ```
 
-多站点/多任务的浏览器租约、另一台电脑连接、首证据 watchdog 和顺序执行边界必须遵守
+多站点/多任务的浏览器租约、另一台电脑连接、In-App Browser 并发、首证据 watchdog 和顺序执行边界必须遵守
 [多线程与浏览器租约](references/multithread-browser-workers.md)。要点是：一个站点一个独立任务线程、一个线程一个独立 tab；同一个 Chrome extension instance 不得被多个线程共享 tab 或同时导航。另一个电脑只有在它的 Chrome 扩展以不同 `extensionInstanceId` 连接后才算可用，不能把同一台电脑的第二个 tab 冒充另一台电脑。
 
 ## 初始化与任务契约
@@ -72,6 +87,7 @@ globalThis.productSemantics = globalThis.productSemantics
 globalThis.productOutput = globalThis.productOutput
   ?? await import(`${SKILL}/lib/enrich-product-output.mjs`);
 globalThis.profileDir ??= `${nodeRepl.cwd}/.crawl-products/profiles`;
+globalThis.browserMode ??= "extension";
 ```
 
 开始前明确：入口 URL（一个或多个）、数量上限、是否要 API-ready 和商品范围。一层 portfolio 是空产品官网的默认接力行为，不作为额外授权问题。多个入口必须作为一个任务清单处理。营养品 API 任务默认：
@@ -134,7 +150,7 @@ globalThis.sourceUrls = globalThis.sourceUrls || ["<用户提供的入口 URL>"]
 - `normalizeProductSemanticEnrichment()`：校验模型产出的推断。
 - `writeEnrichProductExport()`：严格导出。
 
-在外部 Chrome 上，默认把详情读取和逐张画廊/语义复核设为顺序模式（`batchSize: 1`，不对同一 tab 使用 `Promise.all`）；只有已经验证过的 profile、没有交互需求且用户明确接受并发时，才允许使用后台批量读取。`crawlTargets()` 在单线程内始终顺序运行；多个站点只有在有多个独立浏览器实例时才可由多个顶层任务线程分别运行，所有线程结束后才能合并结果。
+无论使用 extension 还是 iab，详情读取和逐张画廊/语义复核都默认顺序执行（`batchSize: 1`，不对同一 tab 使用 `Promise.all`）。`crawlTargets()` 在单线程内始终顺序运行；多个站点只有在多个独立浏览器租约通过实例 ID 验证后，才可由多个顶层任务线程分别运行，所有线程结束后才能合并结果。已验证 profile、没有交互需求且用户明确接受并发时，才允许放宽后台批量读取。
 
 脚本返回 partial、skip、timeout 或空字段时，模型要阅读有界的 record/error 样本并决定恢复动作。可以打印 `crawl.summarize(result)`，也可以检查少量目标 record；不要输出全部大记录污染上下文。
 
@@ -248,6 +264,8 @@ catalogCoverage: {
 ```
 
 运行时 `collectProductUrls()` 为每个 seed 返回 `coverage.seedReports[]`。只有全部 seed 都是 `complete` 才算目录完成；`pagination_mapping_missing`、`max_items_reached`、`max_pages_reached`、`listing_fetch_failed`、`listing_scroll_limit_reached` 等状态必须保存 checkpoint 并恢复。达到用户上限也不是完整目录证明。
+
+有些列表在首个 DOM 读取后才由 hydration/IntersectionObserver 挂载商品卡。首读为 0 不能直接当成空目录：在已验证 selector 上先做一次 DOM snapshot 作为渲染就绪信号，再进行有上限的 settle polling（默认最多 15 秒）；只有等待后仍为 0，才记录为未发现并回到视觉侦查/selector 修复。
 
 ## 画廊、Facts 与语义
 
@@ -397,3 +415,4 @@ partial 还必须写 `semantic-review-queue.json`；其中逐条列出尚未完�
 - [semantic-enrichment.md](references/semantic-enrichment.md)
 - [enrich-product-output.md](references/enrich-product-output.md)
 - [site-outcomes-and-handoffs.md](references/site-outcomes-and-handoffs.md)
+- [multithread-browser-workers.md](references/multithread-browser-workers.md)
