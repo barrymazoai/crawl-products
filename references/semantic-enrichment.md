@@ -2,7 +2,16 @@
 
 本规则只用于商品详情页已经完成视觉定位和结构化抽取之后。原始字段继续以页面为真值；`form`、`health_function`、`main_ingredients` 等派生字段必须明确标注依据，不写入 value-free profile。
 
-推断由模型完成，不由正则或脚本硬编码。可以先调用 `buildSemanticEvidenceBrief(record)` 生成有界证据包，模型结合标题、分类、描述、Directions、成分区、Facts 图片和包装视觉作出判断；再用 `normalizeProductSemanticEnrichment()` 校验结果。脚本没有产出语义字段时，表示仍需模型处理，不表示字段为空。
+推断由模型完成，不由正则或脚本硬编码。可以先调用 `buildSemanticEvidenceBrief(record)` 生成有界证据包，模型结合标题、分类、描述、Directions、成分区、Facts 图片和包装视觉作出判断；再用 `normalizeProductSemanticEnrichment()` 校验结果。脚本没有产出语义字段时，表示仍需模型处理，不表示字段为空。`Ingredients`、`Supplement Facts`、`Nutrition Facts`、`Drug Facts`、`Facts` 这样的单独 section/tab 标题不是内容；如果抽取值只有这些标题，必须重新展开面板或读取图片。
+
+## 每条记录的强制语义回合
+
+详情记录进入 `inventory_partial` 也不能跳过语义补全。模型必须：
+
+1. 调用 `buildSemanticEvidenceBrief(record)`，确认 `ingredients`/`supplementFacts` 是正文而非标题占位，并检查 `factsImages` 中每张候选图。
+2. 从描述、分类、benefit copy、Directions、页面 Ingredients/Facts 内容和图片证据推断 `form`、`health_function`、`main_ingredients`。页面有用途或支持文案时，`health_function` 不得因为没有同名 DOM 字段而留空；应输出宽泛支持类别，而不是治疗/预防声称。
+3. 使用 `normalizeProductSemanticEnrichment()` 和 `mergeProductSemanticEnrichment()` 保存字段、证据、置信度和 rationale。
+4. 用 `semanticCompletion(record)` 做最终检查。仍缺字段时写入 `semantic-review-queue.json`，注明缺的是正文、图片阅读、taxonomy 还是人工验证；不能以空数组伪装成功。
 
 ## 目录
 

@@ -10,7 +10,8 @@
 
 | kind | 含义 | 后续 |
 |---|---|---|
-| `storefront` | 有可抓商品/详情 | 继续完整视觉路线 |
+| `storefront` | 品牌方自有商品/详情目录 | 继续完整视觉路线 |
+| `multi_brand_retailer` | 以转售大量无隶属关系的第三方品牌为主的综合卖场/零售商 | 默认终止，不枚举商品；记录 `multi_brand_retailer_excluded` |
 | `official_store_handoff` | 品牌官网把商城放在另一个 origin | 继续同一品牌商品路线，子 origin 独立保存规则 |
 | `portfolio` | 母公司/国家页指向多个品牌 | 抓取视觉确认的直属 Brand 一层，不递归下一层 |
 | `manufacturer_catalog` | B2B 制造商目录，无消费者 SKU | 终止并汇报 |
@@ -23,11 +24,34 @@
 
 未知入口一律先截图，再调用 `classifySiteOutcome()` 和 `crawlTarget()`；不要直接从入口调用 `crawlSite()`：
 
-1. 有自有商品目录 → `storefront`，抓当前站。
-2. 无自有目录、只有一个同品牌官方商城 → `official_store_handoff`，沿同一品牌路线继续。
-3. 无自有目录、存在多个或一个直属官方 Brand → `portfolio`，抓取全部视觉确认的直属 Brand 一层。
-4. 只发现 Brand 候选但尚未验证 → `needs_brand_verification`，继续打开链接、截图确认官方关系；不能输出 0 商品结果。
-5. 只有在没有自有目录、没有官方商城、没有 Brand 候选，并有明确页面证据时，才使用真正 terminal 结果。
+1. 入口以同一商城销售大量无隶属关系的第三方品牌 → `multi_brand_retailer`，立即终止；商品很多不改变这个结论。
+2. 品牌方有自有商品目录 → `storefront`，抓当前站。
+3. 无自有目录、只有一个同品牌官方商城 → `official_store_handoff`，沿同一品牌路线继续。
+4. 无自有目录、存在多个或一个直属官方 Brand → `portfolio`，抓取全部视觉确认的直属 Brand 一层。
+5. 只发现 Brand 候选但尚未验证 → `needs_brand_verification`，继续打开链接、截图确认官方关系；不能输出 0 商品结果。
+6. 只有在没有自有目录、没有官方商城、没有 Brand 候选，并有明确页面证据时，才使用真正 terminal 结果。
+
+## 综合卖场识别
+
+在读取分页、估算 SKU 或创建 profile 之前，先通过截图判断站点经营身份。满足以下组合证据时标记 `isMultiBrandRetailer: true`：
+
+- 站点主体是 retailer、shop、pharmacy、marketplace 或 reseller，而非商品品牌方/制造商；
+- 商品卡上的品牌来自大量互无公司隶属关系的第三方企业；
+- `Brands` 是购物筛选/品牌索引，商品仍在同一零售目录和结账体系中销售；
+- 导航横跨多个第三方品牌和广泛零售品类，而非同一企业的一组直属品牌。
+
+不要只凭 SKU 数量大或存在 `Brands` 导航排除。大型品牌自营站、制造商目录、同一集团的一层直属 Brand portfolio 仍按各自规则处理。portfolio 的 Brand 链接通向各自官方品牌身份；综合卖场的 Brand 页只是同一零售商目录里的筛选或落地页，不能把它们转换为 `verifiedSites` 绕过终止规则。
+
+默认调用：
+
+```js
+const entryOutcome = classifySiteOutcome({
+  isMultiBrandRetailer: visuallyConfirmedMultiBrandRetailer,
+  productCount: visuallyVisibleProductCount,
+});
+```
+
+只有用户随后明确要求仍然抓取该综合卖场时，才为该次任务传 `includeMultiBrandRetailers: true`。`productScope: "all_products"` 只覆盖商品级营养范围，不覆盖站点级卖场排除。
 
 `resolveEntryCrawlPlan()` 会用 `verifiedSites` 覆盖错误的空站判断。例如父站最初被标成 `service_or_out_of_scope`，但随后确认了直属 Brand，最终计划必须是 `portfolio/terminal:false`。`crawlTarget()` 再调用 `crawlPortfolio()`；每个 Brand 必须提供独立 `sitePlans` 或可复用 profile。任何 Brand 未映射、失败或未完成都会让总任务保持 `incomplete`，但不会阻止继续处理其余 Brand。
 

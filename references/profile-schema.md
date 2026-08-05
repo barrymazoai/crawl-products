@@ -4,6 +4,22 @@
 
 detail profile 只能在截图首遍已经走到代表商品、视觉确认每个请求字段，并完成第二遍 DOM/Network 映射后学习。不要在未知站点首页直接用 CDP 猜详情规则；完整的“入口→列表→商品→字段→揭示动作”保存在外层 `visualRoute`，这里保存由它生成的执行规则。
 
+若代表详情存在口味、规格或颜色选择器，外层 `visualRoute` 还应保存不含具体商品值的 `variantProfile`，使复跑可以重新枚举当前可售状态而不是只读取默认变体：
+
+```json
+{
+  "variantProfile": {
+    "optionGroupSelectors": ["[data-option-group='flavor']", "select[name='size']"],
+    "optionSelectors": ["[data-variant-id]", "select[name='size'] option"],
+    "selectedStateSelectors": ["[data-selected-variant]", "[data-sku]"],
+    "settleMs": 800,
+    "maxStates": 48
+  }
+}
+```
+
+只保存 selector、等待和上限等方法；不要保存本次运行的 Chocolate、30 capsules 等具体商品值。每次运行根据截图和当前 DOM/Network 重新生成 `_meta.variant`，并单独复核该状态的图片和 Facts。
+
 `engine.normalizeDetailExtractionProfile(obj)` 会做归一化并丢弃非法内容，所以永远先过一遍它再用。裁剪规则：每字段最多 8 条规则、正则最长 800 字符、`factLabels`/`tableKeywords` 最多 20 项、`interactionHints` 最多 12 条。被丢掉的内容不会报错，只是静默消失 —— 归一化后打印一下 `Object.keys(profile.fieldRules ?? {})` 确认规则还在。
 
 ## 结构

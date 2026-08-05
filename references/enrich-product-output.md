@@ -21,8 +21,8 @@
 | 字段 | 必需 | 来源 |
 |---|---:|---|
 | `domain` | 是 | 明确覆盖值，或商品来源的公司可注册域名；如 `us.shaklee.com` → `shaklee.com` |
-| `productName` | 是 | `fields.title` |
-| `productUrl` | 是（Skill 严格模式） | 商品真实 HTTP(S) 详情 URL；接口字段本身可选，但 Skill 不允许最终数据丢 URL |
+| `productName` | 是 | `fields.title`；变体明细保留在原始 record 的 `_meta.variant`，不在 Skill 导出阶段改写标题 |
+| `productUrl` | 是（Skill 严格模式） | 商品真实 HTTP(S) 详情 URL；有变体时必须保留可重放的 variant query/path 或已确认的状态 URL；接口字段本身可选，但 Skill 不允许最终数据丢 URL |
 | `images` | 否 | 商品画廊图与已确认的 Facts 图片合并、去重 |
 | `healthFunctions` | 否 | 有证据的 `fields.health_function` |
 | `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；Skill 严格模式要求每项都是完整 taxonomy 对象 |
@@ -34,6 +34,8 @@
 | `supplementFactsOCR` | 否 | 接口目前接收但不落库，默认不导出 |
 
 `domain` 默认压缩为公司可注册域名。接口按数据库公司域名匹配；若数据库确实保存 `shop.example.com` 等特殊值，用显式 `domain` 或 `domainByOrigin` 覆盖。`domain` 不能代替 `productUrl`，后者始终保留完整详情地址。
+
+变体不是 Skill 的丢弃项：原始 record 的 `_meta.variant` 保存 `variantId`、SKU、选项组合、默认状态和状态来源，`productUrl` 保留实际变体状态 URL，图片/Facts 仍按变体独立复核。下游 enrich 接口负责变体关联和落库；Skill 不擅自改写基础 `productName` 或拼接名称来模拟接口字段。
 
 ## 成分 taxonomy
 
@@ -75,9 +77,10 @@ taxonomy 必须来自成分原文和可靠归类知识。无法可靠判断 `sub
 
 - `mainIngredients` 必须来自图片优先的视觉复核；有 Facts/Ingredients 图时不能用固定词表或正文正则绕过看图。
 - 不得把整段 `ingredients` 原文作为一个词条，也不得按逗号盲拆。
-- `healthFunctions` 不得产生治疗、治愈、诊断或预防疾病声称。
+- `healthFunctions` 必须结合标题、分类、描述、benefit copy、Directions 和成分证据推断宽泛支持类别；不能因为页面没有名为 health function 的字段就留空。不得产生治疗、治愈、诊断或预防疾病声称。
 - 全小写词条会在接口导出时转成 Title Case；已有混合大小写或缩写保持原样。
 - 推断证据继续保存在原始 record 的 `_meta.semanticInferences`，接口输入只放最终值。
+- 单独的 `Ingredients`/`Supplement Facts`/`Facts` section 标题不是内容；抽取值只有标题时必须回到页面展开或逐张读取图片。
 
 调用语义校验器：
 
@@ -137,7 +140,7 @@ await productOutput.writeEnrichProductExport(outDir, records, {
 });
 ```
 
-该模式只生成 `inventory-partial.json`、原始 records、错误和报告，固定标记 `completionStatus:"incomplete"`，不会生成任何 API 请求文件。
+该模式只生成 `inventory-partial.json`、原始 records、错误、`semantic-review-queue.json` 和报告，固定标记 `completionStatus:"incomplete"`，不会生成任何 API 请求文件。报告中的 `inputsReady` 只统计已通过 `semanticCompletion()` 与 gap 检查的记录；未完成的 form、healthFunctions、mainIngredients、Facts/Ingredients 读取或画廊复核，必须在 review queue 逐条列出。
 
 整批成功时的固定产物：
 

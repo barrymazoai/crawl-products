@@ -2,6 +2,8 @@
 
 默认策略是 `productScope: "nutrition_single_products"`。目标数据集只收可单独购买和使用的营养、膳食补充或口服健康产品。
 
+该策略只在站点准入后运行。以销售大量无隶属关系第三方品牌为主的综合卖场/零售平台，先按 `multi_brand_retailer` 排除；即使传 `productScope: "all_products"` 也不会自动解除站点级排除。
+
 ## 收录
 
 满足下列任一强证据，且不是组合装：
@@ -21,6 +23,8 @@
 - 详情页没有任何可信营养证据的模糊商品。
 
 `packet` 或 `packets` 描述单份袋装剂型，不等于 Pack 组合装。不要只凭这个词排除。
+
+变体选择器中的 `Pack Size: 30 capsules`、`Count: 60`、`Flavor: Chocolate` 等是同一可单独购买商品的选项，不等同于组合装；只有页面证据表明它把多个独立商品一起销售时才按 `bundle_or_pack` 排除。候选 URL 的 variant/selected-option query 不能单独作为组合装证据。
 
 ## 两层判断
 
