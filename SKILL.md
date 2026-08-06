@@ -154,8 +154,14 @@ if (!valid) throw new Error(errors.join(","));   // 缺终止契约=回 Prefligh
 globalThis.result = await harvest.runHarvest(crawlBrowser, tab, plan, {
   outDir,
   fields: sourceFields,
+  // 用户明确只要前 N 个（成本封顶）时才传；命中 maxItems 会以
+  // complete + oracle "capped" + result.productLimit.accepted 诚实收尾
+  // acceptProductLimit: true,
 });
+globalThis.tab = result.activeTab ?? tab;   // 运行中换过污染 tab 时同步回来
 ```
+
+**引擎产物只能由引擎写**：`harvest-result.json`、`checkpoint.json`、`evidence/` 禁止手改。封顶运行想要 complete，唯一合法途径是 `acceptProductLimit: true`——手改 oracle 状态或 counts 属于谎报，审计会核对 `capped` 与 `productLimit.accepted` 的一致性。同理，本地 patch 引擎源码属于禁止行为：引擎缺能力时记录 blocked/incomplete 并在汇报中说明，由维护者修引擎。
 
 `runHarvest()` 固定生命周期：枚举到不动点（零增长收敛 + oracle 对账）→ 提取到队列排空（每 URL 终态：complete/failed/excluded，方法阶梯 batch_content → rendered_upgrade，binding 无批量接口时自动全走顺序渲染路径，尝试史落盘）→ 证据包与全部画廊图片落盘 → 看门狗兜底。**收割期 scope 只做 URL 级排除**（显式 bundle/非营养 URL），营养证据判定推迟到语义阶段——没有 ingredients/facts 的记录此时必须保留。退出只有三值：
 
