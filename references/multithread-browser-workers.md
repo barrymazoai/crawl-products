@@ -55,10 +55,12 @@ worker 线程的初始 prompt 就是它的 goal，写成完成契约而不是步
 | 故障 | 信号 | 恢复动作 |
 |---|---|---|
 | tab 污染 | 超时、截图空白、`discardTab` | `replaceTaintedTab()` 换新 tab，同一 binding 内重试一次 |
+| 单页 target 反复崩溃 | 同一商品页连续关闭/超时 | 换 tab 重试一次；仍失败 → 该 **URL** 记 failed 终态（带尝试史），继续其余商品 |
 | binding 丢失 | `tabs.new()` 也失败 | 置 binding 为空 → 重新 `agent.browsers.get(browserMode)` → 新 tab → `runHarvest(..., { resume: true })` |
+| 接口缺失 | 如 iab 无 `tabs.content` | 能力差异，非故障；引擎自动降级为顺序提取，禁止判 terminal 或换浏览器模式 |
 | 线程死亡 | state.json 停滞、任务无响应 | 协调者重发 goal prompt，重入线程从磁盘续 |
 
-三级都是执行面问题：不得写成站点 unavailable，不得把剩余 URL 转成"待复核"，不得覆盖已学 profile。页面级访问错误的分类（challenge/TLS/HTTP）见 [site-outcomes-and-handoffs.md](site-outcomes-and-handoffs.md)。
+以上全部是执行面问题：不得写成站点 unavailable，不得把剩余 URL 转成"待复核"，不得覆盖已学 profile。**反例（禁止重演）**：某次实验中 worker 因第 9 个商品页 target 反复关闭，把整站判为 terminal 并跳过了其余全部工作——正确动作是该 URL 记 failed 后继续第 10 个商品、跑完语义队列与审计。页面级访问错误的分类（challenge/TLS/HTTP）见 [site-outcomes-and-handoffs.md](site-outcomes-and-handoffs.md)。
 
 ## 顺序纪律
 

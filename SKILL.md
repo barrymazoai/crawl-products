@@ -71,6 +71,8 @@ globalThis.tab = globalThis.crawlProductsTab;
 
 - tab 污染（超时、断连、截图空白、`discardTab`）：`crawl.replaceTaintedTab(crawlBrowser, tab, error)` 换新 tab，写回 `crawlProductsTab` 和 `tab`。
 - **binding 丢失**（`tabs.new()` 也失败）：置 `globalThis.crawlBrowser = null`，重新执行上面的绑定块，然后 `resume`。binding 丢失是执行面问题，不是站点终态，也不是"待复核"。
+- **单页 target 反复崩溃**（某个商品页连续几次关闭/超时）：换 tab 重试一次，仍失败就把**该 URL** 记 `failed` 终态（带尝试史），继续其余商品。这是记录级执行故障，禁止据此判整站 terminal。
+- **能力差异不是错误**：iab 没有 `browser.tabs.content()` 批量接口属正常，`runHarvest()` 会自动降级为逐页顺序提取；发现某接口缺失时不判 terminal、不换浏览器模式。
 - Full CDP 按 origin 授权；被拒时继续用截图和 DOM。`blocked_by_browser_url_policy` 是执行面限制，不是站点不可访问证据。
 
 ## 初始化
@@ -116,6 +118,8 @@ complete       → 结束
 
 **汇报 incomplete 后停下是违规**。脚本运行期间线程阻塞在 `await` 上，不需要也不允许把控制权交出去等待指令。
 
+**`state.json` 由引擎独占写入**，固定 schema `{state, updatedAtMs}`；harvest 之后的状态推进只能用 `harvest.updateRunState(outDir, state, notes)`——它会把 notes 追加到 `worker-notes.json`。禁止手写或改造 `state.json` 结构（自定义结构会直接导致 Tier 1 审计 fail，视为谎报）。resume 原因、决策记录等叙述性内容一律进 `worker-notes.json`。
+
 ## Preflight 三步（模型 + 浏览器）
 
 **A. 要不要做** → `entry-decision.json`
@@ -153,7 +157,7 @@ globalThis.result = await harvest.runHarvest(crawlBrowser, tab, plan, {
 });
 ```
 
-`runHarvest()` 固定生命周期：枚举到不动点（零增长收敛 + oracle 对账）→ 提取到队列排空（每 URL 终态：complete/failed/excluded，方法阶梯 batch_content → rendered_upgrade，尝试史落盘）→ 证据包与全部画廊图片落盘 → 看门狗兜底。退出只有三值：
+`runHarvest()` 固定生命周期：枚举到不动点（零增长收敛 + oracle 对账）→ 提取到队列排空（每 URL 终态：complete/failed/excluded，方法阶梯 batch_content → rendered_upgrade，binding 无批量接口时自动全走顺序渲染路径，尝试史落盘）→ 证据包与全部画廊图片落盘 → 看门狗兜底。**收割期 scope 只做 URL 级排除**（显式 bundle/非营养 URL），营养证据判定推迟到语义阶段——没有 ingredients/facts 的记录此时必须保留。退出只有三值：
 
 ```js
 switch (result.status) {
@@ -179,7 +183,7 @@ globalThis.queue = semanticQueue.buildSemanticQueue(packages);   // 证据有洞
 const priors = semanticQueue.computeFieldPresencePriors(packages);
 ```
 
-对每个 `pending` 条目执行强制语义回合（细则见 [semantic-enrichment.md](references/semantic-enrichment.md)）：
+对每个 `pending` 条目执行强制语义回合（细则见 [semantic-enrichment.md](references/semantic-enrichment.md)）。**范围终判也在这里**：收割期只按 URL 排除了显式 bundle，此时结合读到的证据做完整判定（`classifyNutritionSingleProduct` 规则），bundle/非营养的记录写 `status:"excluded"` + 原因，是合法语义终态之一：
 
 1. `brief = productSemantics.buildSemanticEvidenceBrief(record)`；Facts 候选图用 `gallery[].localPath` 直接 Read 本地文件，逐张判定并 `productSemantics.finalizeFactsImageReview()` / `finalizeFactsIngredientReview()`；`finalizeGalleryReview()` 后用 `finalizeFactsSourceReview()` 封存页面元素+画廊双来源检查。
 2. 推断 `form`、至少一个宽泛 `health_function`（页面有用途文案时不得留空）、可证明的 `main_ingredients`；每个值带 basis/confidence/evidence，inferred 带 rationale。`normalizeProductSemanticEnrichment()` → `mergeProductSemanticEnrichment()` → `semanticCompletion()`。
