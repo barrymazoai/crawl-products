@@ -23,6 +23,7 @@
 | `domain` | 是 | 明确覆盖值，或商品来源的公司可注册域名；如 `us.shaklee.com` → `shaklee.com` |
 | `productName` | 是 | `fields.title`；变体明细保留在原始 record 的 `_meta.variant`，不在 Skill 导出阶段改写标题 |
 | `productUrl` | 是（Skill 严格模式） | 商品真实 HTTP(S) 详情 URL；有变体时必须保留可重放的 variant query/path 或已确认的状态 URL；接口字段本身可选，但 Skill 不允许最终数据丢 URL |
+| `sku` | 否 | `fields.sku` → `fields.variant_sku` → `_meta.variant.sku`；Skill 定义的可选字段，有值才输出，缺失不阻塞 API-ready（接口侧按此兼容） |
 | `images` | 否 | 商品画廊图与已确认的 Facts 图片合并、去重 |
 | `healthFunctions` | 否 | 有证据的 `fields.health_function` |
 | `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；Skill 严格模式要求每项都是完整 taxonomy 对象 |
