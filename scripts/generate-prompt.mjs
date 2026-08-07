@@ -98,7 +98,12 @@ function exportLines(opts) {
 
 function browserLines(opts) {
   if (opts.browser === "iab") {
-    return ["- browserMode = \"iab\"，自建 binding，browserId 写入 preflight。"];
+    return [
+      "- browserMode = \"iab\"，自建 binding，browserId 写入 preflight。",
+      "  IAB 平台层拒绝访问本站（safety policy）时，已获长期授权降级为",
+      "  browserMode=\"extension\"（本地 Chrome）继续；降级写入 worker-notes",
+      "  并在汇报中说明。extension 单租约：若被其他任务占用则排队等待。",
+    ];
   }
   return [
     "- browserMode = \"extension\"（本地 Chrome，保留登录态/代理）。",
@@ -150,7 +155,10 @@ ${siteList}
 硬性要求：
 - 禁止以任何理由退回单线程顺序执行——"只找到一个 IAB 租约"不是理由
   （租约是每个线程自建 binding 时产生的，不是数出来的）；
-- 唯一允许合并的情况：两线程 browserId 实测相同，后建者并入先建者顺序跑。
+- 唯一允许合并的情况：两线程 browserId 实测相同，后建者并入先建者顺序跑；
+- 某 worker 报 IAB 平台拒绝访问（safety policy）时：该站点转入
+  extension 顺序队列——其余 iab 线程照常并发，被拒站点由一个使用
+  browserMode="extension" 的线程按队列逐站跑完（extension 单租约，禁止并发）。
 
 【发给每个 worker 线程的 goal prompt（替换 <site> 后原样发送）】
 ─────────────────────────────────────────────

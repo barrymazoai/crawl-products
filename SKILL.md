@@ -56,6 +56,8 @@ description: "用视觉优先的三步 preflight（站点判定 → 路径探索
 
 `browserMode` 默认 `"extension"`（本地 Chrome）；公开站点的多任务并发可显式选择 `"iab"`。用户明确选择的浏览器是硬约束，不得静默换成另一种模式；**同模式重建断掉的 binding 不算切换，是 incomplete 恢复的标准动作**。
 
+唯一的例外（用户长期授权）：**IAB 平台层拒绝访问站点**（如 `iab_site_safety_policy_rejected_navigation`）时，降级为 `extension` 继续，降级原因写入 worker-notes 并在汇报中说明。此例外只覆盖 IAB 自身的访问策略拒绝；站点侧的 challenge、登录墙、TLS 错误不适用，仍按原分类处理。extension 是单租约：批次中多个站点需要它时，只能排队顺序执行，禁止并发。
+
 外部 Chrome 先完整读取 `chrome:control-chrome` 的 `SKILL.md`；In-App Browser 先完整读取 `browser:control-in-app-browser` 的 `SKILL.md`。建立绑定：
 
 ```js
