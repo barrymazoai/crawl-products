@@ -218,6 +218,8 @@ const { applied, errors, entry } = semanticQueue.applySemanticOutcome(queueEntry
 
 队列排空（`semanticQueue.semanticQueueSummary(queue).drained === true`）才算 `semantic_done`。`needs_browser` 条目是收敛的小尾巴：模型+浏览器按 gaps 定向补证据后送回队列。队列进度随时落盘 `semantic-queue.json`。
 
+**review 的合法性边界**：review 表示"证据在手但确实推断不出"，原因必须**具体到该记录**（缺哪个字段、看了哪几张图、为何建不了 taxonomy）。证据完整却成批塞 review 是变相跳过强制语义回合，属于谎报——Tier 1 审计会拦截：≥80% 的 review 共用同一原因 = fail；review 占比超过 `reviewAlertRatio`（默认 20%）时禁止写 verified/complete，必须以 blocked 上报并点名原因分布。
+
 ## 验证
 
 **验证①查漏**（harvest_done 后、语义前，模型+浏览器，抽样）：不看 HarvestPlan 的 seeds 独立走一遍站点导航，随机开 `min(10, 20%)` 个商品，逐一确认在证据包里；漏一个 → 补 seed，回 harvest。早发现漏商品，别等语义做完才重爬。
