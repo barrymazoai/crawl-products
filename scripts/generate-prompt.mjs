@@ -15,6 +15,8 @@
  *   --csv <file>     从 CSV 读站点（首列或名为 url/domain/site/website 的列）
  *   --batch-size <N> 每批线程数（默认 10）
  *   --batch <N>      输出第 N 批（1 起）；不传则列出批次计划
+ *   --waves          输出一份覆盖全部站点的协调者 prompt，由 Codex 自己
+ *                    按 batch-size 分波次跑完（你只需发一次）
  *   --max <N>        数量上限；不传 = 全量
  *   --browser <m>    iab（默认，公开站）| extension（需登录态/代理）
  *   --export <m>     api（默认，正式 API-ready 导出）| partial（只要 inventory_partial）
@@ -63,7 +65,7 @@ function readCsvSites(file) {
 function parseArgs(argv) {
   const opts = {
     urls: [], max: null, browser: "iab", export: "api", pull: true, notes: [],
-    batchSize: 10, batch: null, fromCsv: false,
+    batchSize: 10, batch: null, fromCsv: false, waves: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -80,6 +82,8 @@ function parseArgs(argv) {
       const n = Number(argv[++i]);
       if (!Number.isInteger(n) || n <= 0) fail("--batch 需要正整数");
       opts.batch = n;
+    } else if (arg === "--waves") {
+      opts.waves = true;
     } else if (arg === "--max") {
       const n = Number(argv[++i]);
       if (!Number.isInteger(n) || n <= 0) fail("--max 需要正整数");
@@ -254,6 +258,69 @@ ${workerGoal("<site>", opts)}
 （blocked 原因、review 占比过高、疑似非营养品站）。${notesBlock(opts)}`;
 }
 
+/**
+ * One prompt for the whole list, run in waves by the coordinator itself.
+ *
+ * The ledger makes this re-entrant: if the coordinator session dies halfway
+ * through wave 6, re-sending this exact prompt resumes from the ledger
+ * instead of redoing waves 1-5. Per-wave reporting is deliberately terse so
+ * a long run does not drown the coordinator's own context.
+ */
+function wavesPrompt(opts) {
+  const total = Math.ceil(opts.urls.length / opts.batchSize);
+  const waves = [];
+  for (let w = 1; w <= total; w += 1) {
+    const slice = opts.urls.slice((w - 1) * opts.batchSize, w * opts.batchSize);
+    waves.push(`波次 ${w}/${total}:\n${slice.map((u) => `  ${u}`).join("\n")}`);
+  }
+  const head = opts.pull
+    ? `${PULL_LINE}执行一个 ${opts.urls.length} 站点的分波次爬取任务。你是协调者，你自己不爬任何站点。\n`
+    : `执行一个 ${opts.urls.length} 站点的分波次爬取任务。你是协调者，你自己不爬任何站点。\n`;
+
+  return `${head}
+【总体安排】
+共 ${opts.urls.length} 个站点，分 ${total} 个波次，每波最多 ${opts.batchSize} 个并发 worker 线程。
+一波跑完（该波所有站点都到终态）再开下一波，禁止一次性开出全部 ${opts.urls.length} 个线程。
+
+【可重入：先读账本】
+开工前读 .crawl-products/batch-ledger.json（不存在则创建为空数组）。
+对每个站点判断：
+- 账本里已是 complete 且 .crawl-products/runs/<域名>/verification-report.json 为 pass → 跳过；
+- state.json 是 incomplete/verifying 等中间态 → 本波开线程并 resume（不要清空目录重来）；
+- blocked/terminal 或没有记录 → 本波开线程全新跑。
+每个站点到终态后立刻把结果追加进账本（{site, status, apiReady, finishedAt, note}），
+不要攒到最后一次性写——账本是这个长任务的唯一进度真值，会话中断后靠它续跑。
+
+【你的唯一目标】
+所有 ${opts.urls.length} 个站点都进入 complete / terminal / blocked 三种终态之一，
+在此之前不得结束回合。某一波全部到终态后，立即开始下一波，不要停下来等我确认。
+汇报 incomplete 不是终点；incomplete 的唯一合法动作是 resume。
+
+【每一波的执行方式】
+1. 为该波每个未完成站点开一个新 worker 线程（Codex 原生能力），发送下方 goal prompt；
+   禁止退回单线程顺序执行——"只找到一个 IAB 租约"不是理由（租约是每个线程
+   自建 binding 时产生的，不是数出来的）；两线程 browserId 实测相同才合并顺序跑；
+   某站报 IAB 平台拒绝访问（safety policy）→ 转入 extension 顺序队列，
+   其余线程照常并发（extension 单租约，禁止并发）。
+2. 轮询该波各站 state.json；线程停滞或死亡 → 原样重发它的 goal prompt。
+3. 该波全部到终态后：逐站跑 verifyRunArtifacts() 收货、写账本、
+   用一行一站的极简格式汇报本波结果（站点 | 状态 | API-ready 条数 | 备注），
+   然后立即开始下一波。不要把产物内容、完整 JSON 贴进你自己的上下文。
+
+【波次清单】
+${waves.join("\n\n")}
+
+【发给每个 worker 线程的 goal prompt（替换 <site> 后原样发送）】
+─────────────────────────────────────────────
+${workerGoal("<site>", opts)}
+─────────────────────────────────────────────
+
+【最终汇报】
+全部波次结束后给出：总站点数、complete/terminal/blocked 各计数、
+API-ready 总条数、需要人工关注的站点及原因（blocked 原因、review 占比过高、
+疑似非营养品站），以及账本文件路径。${notesBlock(opts)}`;
+}
+
 function notesBlock(opts) {
   if (opts.notes.length === 0) return "";
   return `\n\n【附加说明】\n${opts.notes.map((note) => `- ${note}`).join("\n")}`;
@@ -261,7 +328,9 @@ function notesBlock(opts) {
 
 const opts = parseArgs(process.argv.slice(2));
 
-if (opts.batch != null) {
+if (opts.waves) {
+  console.log(wavesPrompt(opts));
+} else if (opts.batch != null) {
   const total = Math.ceil(opts.urls.length / opts.batchSize);
   if (opts.batch > total) fail(`只有 ${total} 批，--batch ${opts.batch} 超出范围`);
   const all = opts.urls;
