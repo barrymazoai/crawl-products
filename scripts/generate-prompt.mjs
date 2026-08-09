@@ -9,8 +9,12 @@
  *
  * 用法：
  *   node scripts/generate-prompt.mjs <url...> [选项]
+ *   node scripts/generate-prompt.mjs --csv sites.csv --batch 3 [选项]
  *
  * 选项：
+ *   --csv <file>     从 CSV 读站点（首列或名为 url/domain/site/website 的列）
+ *   --batch-size <N> 每批线程数（默认 10）
+ *   --batch <N>      输出第 N 批（1 起）；不传则列出批次计划
  *   --max <N>        数量上限；不传 = 全量
  *   --browser <m>    iab（默认，公开站）| extension（需登录态/代理）
  *   --export <m>     api（默认，正式 API-ready 导出）| partial（只要 inventory_partial）
@@ -18,17 +22,65 @@
  *   --note <text>    附加说明，原样放在 prompt 末尾（可多次）
  */
 
+import { readFileSync } from "node:fs";
+
 function fail(message) {
   console.error(`generate-prompt: ${message}`);
-  console.error("用法: node scripts/generate-prompt.mjs <url...> [--max N] [--browser iab|extension] [--export api|partial] [--no-pull] [--note <text>]");
+  console.error("用法: node scripts/generate-prompt.mjs <url...> | --csv <file> [--batch N] [--batch-size N] [--max N] [--browser iab|extension] [--export api|partial] [--no-pull] [--note <text>]");
   process.exit(1);
 }
 
+/**
+ * Minimal CSV reader: takes the column named url/domain/site/website when a
+ * header row is present, otherwise the first column. Blank lines, comments
+ * and quoted fields are handled; anything unparseable as a URL is reported
+ * rather than silently dropped, so a 100-site list can't lose entries.
+ */
+function readCsvSites(file) {
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    fail(`无法读取 CSV: ${error.message}`);
+  }
+  const rows = text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => line.split(",").map((cell) => cell.trim().replace(/^"|"$/g, "")));
+  if (rows.length === 0) fail("CSV 为空");
+
+  const header = rows[0].map((cell) => cell.toLowerCase());
+  const named = header.findIndex((cell) => ["url", "domain", "site", "website", "网址", "域名"].includes(cell));
+  const looksLikeHeader = named >= 0
+    || header.some((cell) => ["name", "brand", "note", "备注", "品牌"].includes(cell));
+  const column = named >= 0 ? named : 0;
+  return rows
+    .slice(looksLikeHeader ? 1 : 0)
+    .map((row) => row[column])
+    .filter(Boolean);
+}
+
 function parseArgs(argv) {
-  const opts = { urls: [], max: null, browser: "iab", export: "api", pull: true, notes: [] };
+  const opts = {
+    urls: [], max: null, browser: "iab", export: "api", pull: true, notes: [],
+    batchSize: 10, batch: null, fromCsv: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--max") {
+    if (arg === "--csv") {
+      const file = argv[++i];
+      if (!file) fail("--csv 需要文件路径");
+      opts.fromCsv = true;
+      for (const value of readCsvSites(file)) argv.push(value);
+    } else if (arg === "--batch-size") {
+      const n = Number(argv[++i]);
+      if (!Number.isInteger(n) || n <= 0) fail("--batch-size 需要正整数");
+      opts.batchSize = n;
+    } else if (arg === "--batch") {
+      const n = Number(argv[++i]);
+      if (!Number.isInteger(n) || n <= 0) fail("--batch 需要正整数");
+      opts.batch = n;
+    } else if (arg === "--max") {
       const n = Number(argv[++i]);
       if (!Number.isInteger(n) || n <= 0) fail("--max 需要正整数");
       opts.max = n;
@@ -59,7 +111,24 @@ function parseArgs(argv) {
     }
   }
   if (opts.urls.length === 0) fail("至少需要一个站点 URL");
+  opts.urls = [...new Set(opts.urls)];
   return opts;
+}
+
+function batchPlan(opts) {
+  const total = Math.ceil(opts.urls.length / opts.batchSize);
+  const lines = [
+    `# ${opts.urls.length} 个站点，每批 ${opts.batchSize} 个 → 共 ${total} 批`,
+    "",
+  ];
+  for (let b = 1; b <= total; b += 1) {
+    const slice = opts.urls.slice((b - 1) * opts.batchSize, b * opts.batchSize);
+    lines.push(`批次 ${b}/${total}（${slice.length} 站）:`);
+    for (const url of slice) lines.push(`  ${new URL(url).hostname.replace(/^www\./, "")}`);
+    lines.push("");
+  }
+  lines.push("取某一批的 prompt：加 --batch <N>");
+  return lines.join("\n");
 }
 
 const PULL_LINE = "先执行 git -C ~/.codex/skills/crawl-products pull 确保 skill 是最新版本，然后";
@@ -146,9 +215,20 @@ function singleSitePrompt(opts) {
 }
 
 function multiSitePrompt(opts) {
-  const head = opts.pull ? `${PULL_LINE}执行并发批次爬取。你是协调者，你自己不爬任何站点。\n` : "执行并发批次爬取。你是协调者，你自己不爬任何站点。\n";
+  const label = opts.batchLabel ? `执行并发批次爬取（${opts.batchLabel}）` : "执行并发批次爬取";
+  const head = opts.pull
+    ? `${PULL_LINE}${label}。你是协调者，你自己不爬任何站点。\n`
+    : `${label}。你是协调者，你自己不爬任何站点。\n`;
   const siteList = opts.urls.map((url, i) => `  线程 ${i + 1} → ${url}`).join("\n");
   return `${head}
+【开工前：跳过已完成的站点】
+对下面每个站点先看 .crawl-products/runs/<域名>/state.json：
+- 已是 complete 且 verification-report.json 为 pass → 本批跳过，在汇报中列为"已完成跳过"；
+- 是 incomplete/verifying 等中间态 → 开线程并 resume（不要清空目录重来）；
+- 是 blocked/terminal 或目录不存在 → 开线程全新跑。
+把本批每个站点的最终状态追加写入 .crawl-products/batch-ledger.json
+（数组，每项 {site, status, apiReady, finishedAt, note}），供后续批次和我核对进度。
+
 【第一步（必须最先做）：为每个站点开一个新 worker 线程】
 开新线程是 Codex 原生能力，直接开并发送下方 goal prompt（替换 <site>）：
 ${siteList}
@@ -168,8 +248,10 @@ ${workerGoal("<site>", opts)}
 【你（协调者）的职责——只有这三件】
 1. 记录各线程 browserId，确认互不相同；
 2. 轮询各站 state.json；线程停滞或死亡 → 原样重发它的 goal prompt；
-3. 全部到终态后逐站跑 verifyRunArtifacts() 收货，合并汇报。
-不要向 worker 发"下一步做什么"的指令；全部到终态前批次不算完成。${notesBlock(opts)}`;
+3. 全部到终态后逐站跑 verifyRunArtifacts() 收货，写 batch-ledger.json，合并汇报。
+不要向 worker 发"下一步做什么"的指令；本批全部到终态前不算完成。
+汇报时给出：每站状态 + API-ready 条数、总计条数、需要人工关注的站点及原因
+（blocked 原因、review 占比过高、疑似非营养品站）。${notesBlock(opts)}`;
 }
 
 function notesBlock(opts) {
@@ -178,4 +260,16 @@ function notesBlock(opts) {
 }
 
 const opts = parseArgs(process.argv.slice(2));
-console.log(opts.urls.length === 1 ? singleSitePrompt(opts) : multiSitePrompt(opts));
+
+if (opts.batch != null) {
+  const total = Math.ceil(opts.urls.length / opts.batchSize);
+  if (opts.batch > total) fail(`只有 ${total} 批，--batch ${opts.batch} 超出范围`);
+  const all = opts.urls;
+  opts.urls = all.slice((opts.batch - 1) * opts.batchSize, opts.batch * opts.batchSize);
+  opts.batchLabel = `第 ${opts.batch}/${total} 批`;
+  console.log(opts.urls.length === 1 ? singleSitePrompt(opts) : multiSitePrompt(opts));
+} else if (opts.fromCsv || opts.urls.length > opts.batchSize) {
+  console.log(batchPlan(opts));
+} else {
+  console.log(opts.urls.length === 1 ? singleSitePrompt(opts) : multiSitePrompt(opts));
+}
