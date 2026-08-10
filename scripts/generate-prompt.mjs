@@ -282,6 +282,18 @@ function wavesPrompt(opts) {
 共 ${opts.urls.length} 个站点，分 ${total} 个波次，每波最多 ${opts.batchSize} 个并发 worker 线程。
 一波跑完（该波所有站点都到终态）再开下一波，禁止一次性开出全部 ${opts.urls.length} 个线程。
 
+【稳定性纪律（针对 IAB 长跑传输崩溃，必须遵守）】
+1. 错峰启动：同一波内的 worker 线程逐个启动，相邻两个间隔约 30 秒，
+   禁止同时建立多个 IAB binding；
+2. 波间冷却：一波全部到终态后，等待约 3 分钟再开下一波，给浏览器后端恢复时间；
+3. 自适应降速：某一波若有 ≥1/3 的站点因 IAB 传输类原因 blocked
+   （transport ceiling / kernel loss / backend unavailable / handshake timeout 等），
+   下一波并发减半（最低降到 2），并在账本 note 里记录降速决定；
+4. 传输类 blocked 不是终局：账本里记为 status="blocked_transport"，
+   所有波次结束后，把这些站点集中成一个低并发（2 线程）的重试波再跑一遍，
+   重试波仍失败的才定格为 blocked；
+5. worker 结束时必须 finalize 自己的 tab，不留任何研究用临时 tab。
+
 【可重入：先读账本】
 开工前读 .crawl-products/batch-ledger.json（不存在则创建为空数组）。
 对每个站点判断：
