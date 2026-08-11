@@ -206,7 +206,10 @@ function workerGoal(url, opts, { indent = "" } = {}) {
     `纪律：禁止手改引擎产物、禁止本地 patch 引擎源码（缺能力记 blocked 并汇报）、`,
     `state.json 只能由引擎和 harvest.updateRunState() 写入。`,
     ``,
-    `完整生命周期：Preflight A/B/C → runHarvest（结束后`,
+    `先探 Shopify HTTP 通道：probeShopifyCatalog(entryUrl) 非 null 就用`,
+    `createShopifyHarvestHooks 注入 hooks 跑 runHarvest（零浏览器，几秒拿全目录），`,
+    `跳过浏览器化 Preflight B/C；探不到才走浏览器路径。`,
+    `完整生命周期：Preflight A/B/C（或 Shopify HTTP 通道）→ runHarvest（结束后`,
     `globalThis.tab = result.activeTab ?? tab）→ 查漏抽查 →`,
     `语义队列排空（范围终判在此）→ Tier 1 审计 + Tier 2/3 抽查 → 按导出模式落盘。`,
   ];
@@ -279,16 +282,32 @@ function wavesPrompt(opts) {
 
   return `${head}
 【总体安排】
-共 ${opts.urls.length} 个站点，分 ${total} 个波次，每波最多 ${opts.batchSize} 个并发 worker 线程。
-一波跑完（该波所有站点都到终态）再开下一波，禁止一次性开出全部 ${opts.urls.length} 个线程。
+共 ${opts.urls.length} 个站点。
 
-【稳定性纪律（针对 IAB 长跑传输崩溃，必须遵守）】
-1. 错峰启动：同一波内的 worker 线程逐个启动，相邻两个间隔约 30 秒，
+【先分流：两条独立流水线（关键提效，避免 IAB 过载）】
+开工前先跑 scripts/triage-sites.mjs 对全部站点做 HTTP 分诊，按结果分成两组：
+- HTTP 组（分诊标 http_channel/review_giant，即 Shopify 站）：走 Shopify HTTP 通道，
+  完全不碰浏览器，因此不受 IAB 限制，可高并发（可开到 15-20 个线程同时跑）；
+  这些站几秒就能拿全目录，语义阶段是纯离线，崩不了 IAB。
+- 浏览器组（分诊标 browser）：真需要浏览器渲染，受 IAB 限制，低并发（每波 ${opts.batchSize} 个），
+  按下方波次规则跑。
+两组并行推进：HTTP 组自己快速跑完，浏览器组按波次稳步跑，互不抢资源。
+review_giant 的 Shopify 大站仍要按 multi_brand_retailer 规则判断是否综合卖场再决定抓不抓。
+
+【浏览器组的波次与滑动窗口】
+浏览器组分批跑，每批最多 ${opts.batchSize} 个并发线程，禁止一次性开出全部线程。
+用滑动窗口而非"整波齐步走"：始终保持 ${opts.batchSize} 个浏览器线程在跑，
+任一线程到终态就立刻从待办队列补一个新站进来，不必等整波都完成——
+这样一个慢站不会让其余名额空等，浏览器利用率保持满载。
+
+【稳定性纪律（针对 IAB 长跑传输崩溃，只约束浏览器组，HTTP 组不受此限）】
+1. 错峰启动：浏览器线程逐个启动/补位，相邻两个间隔约 30 秒，
    禁止同时建立多个 IAB binding；
-2. 波间冷却：一波全部到终态后，等待约 3 分钟再开下一波，给浏览器后端恢复时间；
-3. 自适应降速：某一波若有 ≥1/3 的站点因 IAB 传输类原因 blocked
-   （transport ceiling / kernel loss / backend unavailable / handshake timeout 等），
-   下一波并发减半（最低降到 2），并在账本 note 里记录降速决定；
+2. 压力冷却：近期若连续出现 IAB 传输类错误（transport ceiling / kernel loss /
+   backend unavailable / handshake timeout 等），暂停补入新浏览器线程约 3 分钟，
+   给后端恢复时间，再继续滑动窗口补位；
+3. 自适应降速：滑动窗口近 ${opts.batchSize} 个站里若 ≥1/3 因 IAB 传输类原因 blocked，
+   把窗口大小减半（最低降到 2），并在账本 note 里记录降速决定；
 4. 传输类 blocked 不是终局：账本里记为 status="blocked_transport"，
    所有波次结束后，把这些站点集中成一个低并发（2 线程）的重试波再跑一遍，
    重试波仍失败的才定格为 blocked；
