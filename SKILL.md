@@ -243,7 +243,7 @@ const exported = await productOutput.writeEnrichProductExport(outDir, enrichedRe
 });
 ```
 
-严格模式拒绝缺 `productUrl`、图片、gallery review、双来源 Facts review、form、healthFunctions、mainIngredients、语义证据或缺 `substance/category` 的主成分。正式产物批次级全有或全无；`review` 记录单独成文件，不进 `products.json`。中间库存必须显式 `outputMode:"inventory_partial"` 并写 `semantic-review-queue.json`。`domain` 默认公司可注册域名；`sku` 为可选字段，有值才输出。除非用户明确授权，只生成请求文件，不调用接口。
+严格模式拒绝缺 `productUrl`、`price`、图片、gallery review、双来源 Facts review、form、healthFunctions、mainIngredients、语义证据或缺 `substance/category` 的主成分。正式产物批次级全有或全无；`review` 记录单独成文件，不进 `products.json`。中间库存必须显式 `outputMode:"inventory_partial"` 并写 `semantic-review-queue.json`。`domain` 默认公司可注册域名；`price` 默认必导出（页面价 → 变体价，原样字符串），`sku` 为可选字段有值才输出。除非用户明确授权，只生成请求文件，不调用接口。
 
 ## 多站点与 worker 线程
 

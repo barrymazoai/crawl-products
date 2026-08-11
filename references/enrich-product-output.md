@@ -31,8 +31,8 @@
 | `updateExisting` | 否 | 默认且显式输出 `false`；补已有产品关系/图片时设为 `true` |
 | `processedAt` | 否 | 本次导出时间，ISO 字符串 |
 | `error` | 否 | 上游显式错误信息 |
-| `price` | 否 | 接口目前接收但不落库，默认不导出 |
-| `supplementFactsOCR` | 否 | 接口目前接收但不落库，默认不导出 |
+| `price` | 是（Skill 严格模式） | `fields.price` → `retail_price` → 默认可售变体价；原始字符串（含币种/格式）原样保留，接口侧归一。缺失进 error/review 队列。可传 `requirePrice:false` 放宽 |
+| `supplementFactsOCR` | 否 | 接口目前接收但不落库，默认不导出（需 `includeNonPersistedFields:true`） |
 
 `domain` 默认压缩为公司可注册域名。接口按数据库公司域名匹配；若数据库确实保存 `shop.example.com` 等特殊值，用显式 `domain` 或 `domainByOrigin` 覆盖。`domain` 不能代替 `productUrl`，后者始终保留完整详情地址。
 
@@ -154,7 +154,7 @@ await productOutput.writeEnrichProductExport(outDir, records, {
 - `product-enrich-errors.json`：无法生成严格接口输入的记录及缺失字段。
 - `enrich-export-report.json`：收到、可提交和失败条数。
 
-默认不导出当前不会落库的 `price` 与 `supplementFactsOCR`。用户明确需要兼容字段时传 `includeNonPersistedFields: true`，并清楚说明接口当前不会持久化它们。
+`price` 默认导出且为严格模式必需字段：取 `fields.price` → `retail_price` → 默认可售变体价，原始字符串原样保留（多币种/多语言由接口侧归一）；缺价的记录进 error/review，不进 `products.json`。确有整站无价场景时传 `requirePrice:false` 放宽。`supplementFactsOCR` 仍默认不导出，需要时传 `includeNonPersistedFields: true`。
 
 `updateExisting:false` 命中同名+同公司产品时直接跳过；需要给已有产品补关系、taxonomy 或图片时显式传 `updateExisting:true`。
 
