@@ -141,6 +141,7 @@ if (probe) {
 ```
 
 - 探到 Shopify（`probe` 非 null）→ 走此通道，跳过浏览器化的 Preflight B/C 视觉探索；HarvestPlan 的 seeds 用 `/products.json`、oracle 用 `shopify_products_json`、耗尽信号 `single_page_confirmed`。
+- **成分是尽力而为，缺失不阻塞**：`products.json` 没有 Supplement Facts 表和结构化成分，这些在详情页。所以 HTTP 通道记录已被标记 `evidence_source:"shopify_http"`——语义阶段从**已下载的商品图**里能读到成分就填 `main_ingredients`，读不到就**留空并直接标 enriched**（不要判 needs_browser、不要因缺成分 blocked）。`form`、`health_function` 仍必须从标题/描述/类目/图片推断填满。严格导出门对这类记录自动放宽 mainIngredients / facts review / gallery review 三项，只要有 productUrl+price+images+form+healthFunctions 就能导出。**目标：图片全部拿到落盘，成分有图能读就读、没有就算，绝不为缺成分卡住整站。**
 - `built.truncated === true`（目录超过页数上限）→ 结果自然是 incomplete，正常 resume。
 - **仍需人工判断卖场**：Shopify 大站（分诊标 `review_giant`，或 `built.productCount` 极大）可能是综合多品牌卖场，按 Preflight A 的 `multi_brand_retailer` 规则判断，是卖场就排除。
 - 探不到 Shopify（`probe` 为 null，或站点是自建/其他平台）→ 回退下面的浏览器化 Preflight 三步。
