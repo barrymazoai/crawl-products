@@ -226,37 +226,38 @@ function multiSitePrompt(opts) {
   const head = opts.pull
     ? `${PULL_LINE}${label}。你是协调者，你自己不爬任何站点。\n`
     : `${label}。你是协调者，你自己不爬任何站点。\n`;
-  const siteList = opts.urls.map((url, i) => `  线程 ${i + 1} → ${url}`).join("\n");
+  const siteList = opts.urls.map((url, i) => `  ${i + 1}. ${url}`).join("\n");
   return `${head}
 【开工前：跳过已完成的站点】
 对下面每个站点先看 .crawl-products/runs/<域名>/state.json：
 - 已是 complete 且 verification-report.json 为 pass → 本批跳过，在汇报中列为"已完成跳过"；
-- 是 incomplete/verifying 等中间态 → 开线程并 resume（不要清空目录重来）；
-- 是 blocked/terminal 或目录不存在 → 开线程全新跑。
+- 是 incomplete/verifying 等中间态 → resume（不要清空目录重来）；
+- 是 blocked/terminal 或目录不存在 → 全新跑。
 把本批每个站点的最终状态追加写入 .crawl-products/batch-ledger.json
 （数组，每项 {site, status, apiReady, finishedAt, note}），供后续批次和我核对进度。
 
-【第一步（必须最先做）：为每个站点开一个新 worker 线程】
-开新线程是 Codex 原生能力，直接开并发送下方 goal prompt（替换 <site>）：
+【第一步（必须最先做）：先分诊，Shopify 站不开 Thread、其余站每站开一个新 Thread 会话】
+先跑 scripts/triage-sites.mjs 分诊。Shopify（http_channel）的站走 HTTP 通道，由你
+（协调者）在**当前会话内联跑**，不要为它们开新 Thread 会话（省句柄、也更快）。
+只有需要浏览器（browser）的站，才**为每个站新建一个 Thread 会话**——即在 Codex 里
+新开一个独立的对话/任务来跑它，**不是** subagent、**不是**在当前会话里做。
 ${siteList}
-硬性要求：
-- 禁止以任何理由退回单线程顺序执行——"只找到一个 IAB 租约"不是理由
-  （租约是每个线程自建 binding 时产生的，不是数出来的）；
-- 唯一允许合并的情况：两线程 browserId 实测相同，后建者并入先建者顺序跑；
-- 某 worker 报 IAB 平台拒绝访问（safety policy）时：该站点转入
-  extension 顺序队列——其余 iab 线程照常并发，被拒站点由一个使用
-  browserMode="extension" 的线程按队列逐站跑完（extension 单租约，禁止并发）。
+硬性要求（仅针对需浏览器的站）：
+- "开新 Thread 会话"= Codex 新开独立对话/任务；每个 Thread 会话自建 binding、有自己的 browserId；
+- 两个 Thread 会话 browserId 实测相同才合并顺序跑；
+- 某站报 IAB 平台拒绝访问（safety policy）→ 转入 extension 顺序队列，由一个
+  browserMode="extension" 的 Thread 会话逐站跑完（extension 单租约，禁止并发）。
 
-【发给每个 worker 线程的 goal prompt（替换 <site> 后原样发送）】
+【发给每个需浏览器站的 Thread 会话的 goal prompt（替换 <site> 后原样发送）】
 ─────────────────────────────────────────────
 ${workerGoal("<site>", opts)}
 ─────────────────────────────────────────────
 
 【你（协调者）的职责——只有这三件】
-1. 记录各线程 browserId，确认互不相同；
-2. 轮询各站 state.json；线程停滞或死亡 → 原样重发它的 goal prompt；
+1. 记录各 Thread 会话 browserId，确认互不相同；
+2. 轮询各站 state.json；某 Thread 会话停滞或死亡 → 新开一个 Thread 会话原样重发它的 goal prompt；
 3. 全部到终态后逐站跑 verifyRunArtifacts() 收货，写 batch-ledger.json，合并汇报。
-不要向 worker 发"下一步做什么"的指令；本批全部到终态前不算完成。
+不要向 Thread 会话发"下一步做什么"的指令；本批全部到终态前不算完成。
 汇报时给出：每站状态 + API-ready 条数、总计条数、需要人工关注的站点及原因
 （blocked 原因、review 占比过高、疑似非营养品站）。${notesBlock(opts)}`;
 }
@@ -285,69 +286,75 @@ function wavesPrompt(opts) {
 共 ${opts.urls.length} 个站点。
 
 【先分流：两条独立流水线（关键提效，避免 IAB 过载）】
-开工前先跑 scripts/triage-sites.mjs 对全部站点做 HTTP 分诊，按结果分成两组：
-- HTTP 组（分诊标 http_channel/review_giant，即 Shopify 站）：走 Shopify HTTP 通道，
-  完全不碰浏览器，因此不受 IAB 限制，可高并发（可开到 15-20 个线程同时跑）；
-  这些站几秒就能拿全目录，语义阶段是纯离线，崩不了 IAB。
-- 浏览器组（分诊标 browser）：真需要浏览器渲染，受 IAB 限制，低并发（每波 ${opts.batchSize} 个），
-  按下方波次规则跑。
-两组并行推进：HTTP 组自己快速跑完，浏览器组按波次稳步跑，互不抢资源。
-review_giant 的 Shopify 大站仍要按 multi_brand_retailer 规则判断是否综合卖场再决定抓不抓。
+开工前先跑 scripts/triage-sites.mjs 对全部站点做 HTTP 分诊，按结果分成两组，两组用不同的执行方式：
 
-【浏览器组的波次与滑动窗口】
-浏览器组分批跑，每批最多 ${opts.batchSize} 个并发线程，禁止一次性开出全部线程。
-用滑动窗口而非"整波齐步走"：始终保持 ${opts.batchSize} 个浏览器线程在跑，
-任一线程到终态就立刻从待办队列补一个新站进来，不必等整波都完成——
-这样一个慢站不会让其余名额空等，浏览器利用率保持满载。
+■ HTTP 组（分诊标 http_channel/review_giant，即 Shopify 站）——**不要开新 Thread 会话**：
+  这些站走 Shopify HTTP 通道，完全不碰浏览器、不需要独立浏览器 binding，所以为它们
+  开新 Thread 会话纯属浪费、还会占用并加速耗尽 Thread/句柄池。正确做法：由你（协调者）
+  在**当前这个会话里直接内联跑**，对每个站顺序执行：
+    probeShopifyCatalog(url) → createShopifyHarvestHooks(url) → runHarvest(注入 hooks)
+    → 语义队列 → verifyRunArtifacts → 导出 → 写账本。
+  每个站几秒到一两分钟，顺序跑完全够（也可小幅并发，但不开 Thread）。这一组不受 IAB
+  限制，也不会因宿主/句柄池饱和而卡住。
+  review_giant 的 Shopify 大站仍要按 multi_brand_retailer 规则判断是否综合卖场再决定抓不抓。
+
+■ 浏览器组（分诊标 browser）——**每个站开一个新的 Thread 会话**：
+  "开新 Thread 会话"= 在 Codex 里新建一个独立的对话/任务来跑这个站，**不是** subagent，
+  **不是**在当前会话里做。这些站真需要浏览器渲染、受 IAB 限制，因此才需要各自独立的
+  Thread 会话（各自建 browserId）。按下方滑动窗口规则跑。
+
+【浏览器组的滑动窗口】
+浏览器组每站一个新的 Thread 会话，同时最多 ${opts.batchSize} 个在跑，禁止一次性全开。
+用滑动窗口而非"整波齐步走"：始终保持 ${opts.batchSize} 个 Thread 会话在跑，
+任一到终态就立刻从待办队列补一个新站（新开一个 Thread 会话）进来，不必等整波完成——
+这样一个慢站不会让其余名额空等。
 
 【稳定性纪律（针对 IAB 长跑传输崩溃，只约束浏览器组，HTTP 组不受此限）】
-1. 错峰启动：浏览器线程逐个启动/补位，相邻两个间隔约 30 秒，
+1. 错峰启动：浏览器组的 Thread 会话逐个启动/补位，相邻两个间隔约 30 秒，
    禁止同时建立多个 IAB binding；
 2. 压力冷却：近期若连续出现 IAB 传输类错误（transport ceiling / kernel loss /
-   backend unavailable / handshake timeout 等），暂停补入新浏览器线程约 3 分钟，
+   backend unavailable / handshake timeout 等），暂停补入新的 Thread 会话约 3 分钟，
    给后端恢复时间，再继续滑动窗口补位；
 3. 自适应降速：滑动窗口近 ${opts.batchSize} 个站里若 ≥1/3 因 IAB 传输类原因 blocked，
    把窗口大小减半（最低降到 2），并在账本 note 里记录降速决定；
 4. 传输类 blocked 不是终局：账本里记为 status="blocked_transport"，
-   所有波次结束后，把这些站点集中成一个低并发（2 线程）的重试波再跑一遍，
-   重试波仍失败的才定格为 blocked；
+   所有站点跑完后，把这些站点集中成一个低并发（2 个 Thread 会话）的重试轮再跑一遍，
+   重试仍失败的才定格为 blocked；
 5. 单站超时不纠缠：引擎对每个站有墙钟死线和单次操作硬超时，一个站跑太久会
    自动落盘 checkpoint 并返回 incomplete/binding_lost。遇到这种站不要当场反复
-   resume 死磕——在账本记为 status="incomplete_recycle"，继续本波其余站点。
-   所有正常波次跑完后，把 incomplete_recycle 的站集中成一个低并发（2 线程）
-   回收波，用 resume 从 checkpoint 续跑（已爬的不重来）。一个慢站绝不允许
-   拖住整波；
-6. worker 结束时必须 finalize 自己的 tab，不留任何研究用临时 tab。
+   resume 死磕——在账本记为 status="incomplete_recycle"，继续其余站点。
+   全部跑完后，把 incomplete_recycle 的站集中成一个低并发（2 个 Thread 会话）
+   回收轮，用 resume 从 checkpoint 续跑（已爬的不重来）。一个慢站绝不允许拖住整批；
+6. 每个浏览器组 Thread 会话结束时必须 finalize 自己的 tab，不留研究用临时 tab。
 
 【可重入：先读账本】
 开工前读 .crawl-products/batch-ledger.json（不存在则创建为空数组）。
 对每个站点判断：
 - 账本里已是 complete 且 .crawl-products/runs/<域名>/verification-report.json 为 pass → 跳过；
-- state.json 是 incomplete/verifying 等中间态 → 本波开线程并 resume（不要清空目录重来）；
-- blocked/terminal 或没有记录 → 本波开线程全新跑。
+- state.json 是 incomplete/verifying 等中间态 → resume（不要清空目录重来）；
+- blocked/terminal 或没有记录 → 全新跑（按分组：Shopify 内联，其余开 Thread 会话）。
 每个站点到终态后立刻把结果追加进账本（{site, status, apiReady, finishedAt, note}），
 不要攒到最后一次性写——账本是这个长任务的唯一进度真值，会话中断后靠它续跑。
 
 【你的唯一目标】
 所有 ${opts.urls.length} 个站点都进入 complete / terminal / blocked 三种终态之一，
-在此之前不得结束回合。某一波全部到终态后，立即开始下一波，不要停下来等我确认。
+在此之前不得结束回合。HTTP 组内联跑完、浏览器组滑动窗口跑完，全部到终态才结束。
 汇报 incomplete 不是终点；incomplete 的唯一合法动作是 resume。
 
-【每一波的执行方式】
-1. 为该波每个未完成站点开一个新 worker 线程（Codex 原生能力），发送下方 goal prompt；
-   禁止退回单线程顺序执行——"只找到一个 IAB 租约"不是理由（租约是每个线程
-   自建 binding 时产生的，不是数出来的）；两线程 browserId 实测相同才合并顺序跑；
-   某站报 IAB 平台拒绝访问（safety policy）→ 转入 extension 顺序队列，
-   其余线程照常并发（extension 单租约，禁止并发）。
-2. 轮询该波各站 state.json；线程停滞或死亡 → 原样重发它的 goal prompt。
-3. 该波全部到终态后：逐站跑 verifyRunArtifacts() 收货、写账本、
-   用一行一站的极简格式汇报本波结果（站点 | 状态 | API-ready 条数 | 备注），
-   然后立即开始下一波。不要把产物内容、完整 JSON 贴进你自己的上下文。
+【浏览器组每站的执行方式】
+1. 为浏览器组每个未完成站点新建一个 Thread 会话（Codex 里新开一个独立对话/任务，
+   不是 subagent、不是在当前会话内做），把下方 goal prompt 发给它。每个 Thread 会话
+   自建 binding、有自己的 browserId；两个 Thread 会话 browserId 实测相同才合并顺序跑；
+   某站报 IAB 平台拒绝访问（safety policy）→ 转入 extension 顺序队列（extension 单租约，禁止并发）。
+2. 轮询各站 state.json；某 Thread 会话停滞或死亡 → 新开一个 Thread 会话原样重发它的 goal prompt。
+3. 每个站到终态后：跑 verifyRunArtifacts() 收货、写账本、用一行一站的极简格式汇报
+   （站点 | 状态 | API-ready 条数 | 备注），滑动窗口补入下一个站。
+   不要把产物内容、完整 JSON 贴进你自己的上下文。
 
-【波次清单】
+【分组清单】（HTTP 组内联跑，浏览器组每站开新 Thread 会话；具体分组按分诊结果）
 ${waves.join("\n\n")}
 
-【发给每个 worker 线程的 goal prompt（替换 <site> 后原样发送）】
+【发给浏览器组每个 Thread 会话的 goal prompt（替换 <site> 后原样发送）】
 ─────────────────────────────────────────────
 ${workerGoal("<site>", opts)}
 ─────────────────────────────────────────────
