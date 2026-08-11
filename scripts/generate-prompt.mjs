@@ -292,7 +292,13 @@ function wavesPrompt(opts) {
 4. 传输类 blocked 不是终局：账本里记为 status="blocked_transport"，
    所有波次结束后，把这些站点集中成一个低并发（2 线程）的重试波再跑一遍，
    重试波仍失败的才定格为 blocked；
-5. worker 结束时必须 finalize 自己的 tab，不留任何研究用临时 tab。
+5. 单站超时不纠缠：引擎对每个站有墙钟死线和单次操作硬超时，一个站跑太久会
+   自动落盘 checkpoint 并返回 incomplete/binding_lost。遇到这种站不要当场反复
+   resume 死磕——在账本记为 status="incomplete_recycle"，继续本波其余站点。
+   所有正常波次跑完后，把 incomplete_recycle 的站集中成一个低并发（2 线程）
+   回收波，用 resume 从 checkpoint 续跑（已爬的不重来）。一个慢站绝不允许
+   拖住整波；
+6. worker 结束时必须 finalize 自己的 tab，不留任何研究用临时 tab。
 
 【可重入：先读账本】
 开工前读 .crawl-products/batch-ledger.json（不存在则创建为空数组）。

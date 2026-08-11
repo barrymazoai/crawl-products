@@ -78,7 +78,8 @@
     "fixpoint": { "extraRoundsAfterConverge": 1 },
     "oracles": [{ "type": "collection_count", "expected": 200, "source": "listing header" }],
     "budgets": { "maxItems": 200, "maxPagesPerSeed": 50,
-                 "wallClockMinutes": 60, "stallMinutes": 5 },
+                 "wallClockMinutes": 60, "stallMinutes": 5,
+                 "operationTimeoutMinutes": 3 },
     "retryPerUrl": 2
   }
 }
@@ -117,7 +118,11 @@
 INIT ──► ENUMERATE ──► EXTRACT ──► FINALIZE ──► 退出（三值）
           循环直到      循环直到                   complete / incomplete+checkpoint / terminal
           不动点        队列排空
-全程看门狗：停滞 stallMinutes 无进度事件 / 预算耗尽 → 强制 incomplete + checkpoint
+全程看门狗（三重死线，任一触发都落盘 incomplete + checkpoint，绝不冻结）：
+  - stallMinutes：停滞无进度事件；
+  - wallClockMinutes：单站总墙钟死线（防大站陷太久拖住整波）；
+  - operationTimeoutMinutes：单次 extract/upgrade 调用硬超时（Promise.race 真实定时器，
+    防浏览器操作在内部卡死时循环走不到检查点）。超时按 binding_lost 处理，可 resume。
 ```
 
 **枚举终止（不动点）**：
