@@ -83,6 +83,7 @@ globalThis.tab = globalThis.crawlProductsTab;
 globalThis.SKILL = "<本 Skill 目录绝对路径>";
 globalThis.crawl = globalThis.crawl ?? await import(`${SKILL}/lib/crawl.mjs`);
 globalThis.harvest = globalThis.harvest ?? await import(`${SKILL}/lib/run-harvest.mjs`);
+globalThis.shopify = globalThis.shopify ?? await import(`${SKILL}/lib/shopify-http.mjs`);
 globalThis.harvestPlan = globalThis.harvestPlan ?? await import(`${SKILL}/lib/harvest-plan.mjs`);
 globalThis.verify = globalThis.verify ?? await import(`${SKILL}/lib/verify-run-artifacts.mjs`);
 globalThis.semanticQueue = globalThis.semanticQueue ?? await import(`${SKILL}/lib/semantic-queue.mjs`);
@@ -122,7 +123,31 @@ complete       → 结束
 
 **`state.json` 由引擎独占写入**，固定 schema `{state, updatedAtMs}`；harvest 之后的状态推进只能用 `harvest.updateRunState(outDir, state, notes)`——它会把 notes 追加到 `worker-notes.json`。禁止手写或改造 `state.json` 结构（自定义结构会直接导致 Tier 1 审计 fail，视为谎报）。resume 原因、决策记录等叙述性内容一律进 `worker-notes.json`。
 
-## Preflight 三步（模型 + 浏览器）
+## 优先：Shopify HTTP 通道（能免浏览器就免浏览器）
+
+Preflight A 之前先探测平台数据端点。约 60% 的营养品站是 Shopify，其整目录（商品、变体、SKU、价格、图片 URL、描述）在 `/products.json` 纯 HTTP 可得，**完全不需要浏览器**——IAB 因此根本不会被这些站加载，从源头避免传输崩溃。
+
+```js
+globalThis.shopify = globalThis.shopify ?? await import(`${SKILL}/lib/shopify-http.mjs`);
+const probe = await shopify.probeShopifyCatalog(entryUrl);
+if (probe) {
+  const built = await shopify.createShopifyHarvestHooks(entryUrl);
+  // entry-decision 记 kind:"storefront"、channel:"shopify_http"、商品数 built.productCount
+  globalThis.result = await harvest.runHarvest(crawlBrowser, tab, plan, {
+    outDir, fields: sourceFields, hooks: built.hooks,   // ← 注入 HTTP hooks，引擎不碰浏览器
+  });
+  // 后续语义队列 / 验证 / 导出完全一致
+}
+```
+
+- 探到 Shopify（`probe` 非 null）→ 走此通道，跳过浏览器化的 Preflight B/C 视觉探索；HarvestPlan 的 seeds 用 `/products.json`、oracle 用 `shopify_products_json`、耗尽信号 `single_page_confirmed`。
+- `built.truncated === true`（目录超过页数上限）→ 结果自然是 incomplete，正常 resume。
+- **仍需人工判断卖场**：Shopify 大站（分诊标 `review_giant`，或 `built.productCount` 极大）可能是综合多品牌卖场，按 Preflight A 的 `multi_brand_retailer` 规则判断，是卖场就排除。
+- 探不到 Shopify（`probe` 为 null，或站点是自建/其他平台）→ 回退下面的浏览器化 Preflight 三步。
+
+开跑大批次前，先用 `scripts/triage-sites.mjs --csv <list>` 分诊，把 `http_channel` 的站排在前面并走 HTTP 通道，`browser` 的站才占用浏览器名额。
+
+## Preflight 三步（浏览器路径，Shopify HTTP 通道不适用时）
 
 **A. 要不要做** → `entry-decision.json`
 截图判定站点身份（`crawl.classifySiteOutcome()`，规则见 [site-outcomes-and-handoffs.md](references/site-outcomes-and-handoffs.md)）：
