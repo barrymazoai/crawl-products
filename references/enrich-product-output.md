@@ -136,6 +136,8 @@ const exported = await productOutput.writeEnrichProductExport(
 
 正式产物采用批次级全有或全无。只有 `runCompletion.status === "complete"` 且所有输入记录均通过时才生成 `products.json`、`product-enrich-requests.*` 和 CSV。多网站任务必须传入 `crawlTargets()` 返回的整批 completion；单站 `complete` 或已保存 checkpoint 不能替代整批 completion。若整次目录/详情任务未结案、遗漏 `runCompletion` 或任一记录失败，只生成 `api-ready-candidates.json`、`crawl-records.json`、错误文件和 `enrich-export-report.json`；候选文件不是可提交结果。
 
+**导出器不信自我声明**：写正式产物前会交叉读 `outDir/state.json`——若 state 不是 `verified`/`complete`/`harvest_done`（例如 `blocked`/`incomplete`/`terminal`），即使调用方传了 `runCompletion:"complete"` 也拒绝写 `products.json`，只落 partial。这挡住了"blocked 却写出正式导出"的状态-产物不同步。无 state.json（单元测试/临时调用）时不拦，由 `runCompletion` 单独决定。
+
 `allowPartial` 已移除。用户明确要求中间库存时使用独立模式：
 
 ```js
