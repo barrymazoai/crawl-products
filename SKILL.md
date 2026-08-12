@@ -164,7 +164,7 @@ if (probe) {
 探索时顺手回答每个 seed"我怎么知道翻完了"：
 - 耗尽信号：`next_link_absent` / `button_gone` / `no_new_urls_after_clicks:N` / `no_new_cards_after_scrolls:N` / `single_page_confirmed`（必须与分页方式匹配，校验器会查）；
 - 对账 oracle：sitemap 计数、列表页声明计数（"200 products"）、Shopify `products.json`；
-- 预算：maxItems / maxPagesPerSeed / wallClockMinutes（单站总墙钟死线）/ stallMinutes（停滞死线）/ operationTimeoutMinutes（单次爬取调用硬超时，防浏览器操作内部卡死）/ retryPerUrl。三个死线任一触发都会落盘 checkpoint 并返回 incomplete，绝不冻结。
+- 预算：maxItems / maxPagesPerSeed / wallClockMinutes（单站总墙钟死线）/ stallMinutes（停滞死线）/ operationIdleMinutes（单次爬取调用的**无进展**超时，默认 5min，只在调用完全不吐进度时才终止——慢但活着的多页任务每处理一页 ping 一次即续命，不会被误杀）/ retryPerUrl。任一死线触发都会落盘 checkpoint 并返回 incomplete，绝不冻结。
 
 ## HarvestPlan 与机械收割
 

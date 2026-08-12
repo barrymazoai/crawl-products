@@ -21,11 +21,14 @@
 | 字段 | 必需 | 来源 |
 |---|---:|---|
 | `domain` | 是 | 明确覆盖值，或商品来源的公司可注册域名；如 `us.shaklee.com` → `shaklee.com` |
-| `productName` | 是 | `fields.title`；变体明细保留在原始 record 的 `_meta.variant`，不在 Skill 导出阶段改写标题 |
-| `productUrl` | 是（Skill 严格模式） | 商品真实 HTTP(S) 详情 URL；有变体时必须保留可重放的 variant query/path 或已确认的状态 URL；接口字段本身可选，但 Skill 不允许最终数据丢 URL |
-| `sku` | 否 | `fields.sku` → `fields.variant_sku` → `_meta.variant.sku`；Skill 定义的可选字段，有值才输出，缺失不阻塞 API-ready（接口侧按此兼容） |
-| `images` | 否 | 商品画廊图与已确认的 Facts 图片合并、去重 |
-| `healthFunctions` | 否 | 有证据的 `fields.health_function` |
+| `productName` | 是 | 母商品名 `fields.title`；每个变体行共用同一母商品名，不拼变体后缀 |
+| `productUrl` | 是（Skill 严格模式） | **变体自己的**详情 URL（带 `?variant=`）；一变体一行 |
+| `productGroupId` | 是 | 母商品关联键 = 去掉 `?variant=` 的母商品基础 URL；同一母商品的所有变体行共享它，下游 `GROUP BY productGroupId` 聚合回母商品 |
+| `sku` | 否 | 变体自己的 SKU（`variant.sku` → `fields.sku`）；一变体一 SKU |
+| `variantId` | 否 | 变体 ID（有变体时带上） |
+| `variantOptions` | 否 | 变体的选项组合对象，如 `{ "Saveur": "Neutre", "Quantité": "1 BOITE" }` |
+| `images` | 否 | 变体有专属图（`variant.imageUrl`）时它排首位，其余继承母商品画廊；无专属图则全部继承母商品 |
+| `healthFunctions` | 否 | **对齐受控词表**：模型产出的短语经 `health-function-vocab` 匹配到 658 词表，输出 `[{id, name}]`；没对上词表的进 review，不硬塞 |
 | `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；Skill 严格模式要求每项都是完整 taxonomy 对象 |
 | `productForm` | 否 | 有证据的 `fields.form` |
 | `updateExisting` | 否 | 默认且显式输出 `false`；补已有产品关系/图片时设为 `true` |

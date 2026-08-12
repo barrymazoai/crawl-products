@@ -79,7 +79,7 @@
     "oracles": [{ "type": "collection_count", "expected": 200, "source": "listing header" }],
     "budgets": { "maxItems": 200, "maxPagesPerSeed": 50,
                  "wallClockMinutes": 60, "stallMinutes": 5,
-                 "operationTimeoutMinutes": 3 },
+                 "operationIdleMinutes": 5 },
     "retryPerUrl": 2
   }
 }
@@ -121,7 +121,7 @@ INIT ──► ENUMERATE ──► EXTRACT ──► FINALIZE ──► 退出�
 全程看门狗（三重死线，任一触发都落盘 incomplete + checkpoint，绝不冻结）：
   - stallMinutes：停滞无进度事件；
   - wallClockMinutes：单站总墙钟死线（防大站陷太久拖住整波）；
-  - operationTimeoutMinutes：单次 extract/upgrade 调用硬超时（Promise.race 真实定时器，
+  - operationIdleMinutes：单次 extract/upgrade 调用的无进展超时（idle deadline，每次进度信号重置，
     防浏览器操作在内部卡死时循环走不到检查点）。超时按 binding_lost 处理，可 resume。
 ```
 
