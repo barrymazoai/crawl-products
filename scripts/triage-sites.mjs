@@ -20,6 +20,7 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { vendorDiversity, isMultiBrandRetailer } from "../lib/shopify-http.mjs";
 
 const GIANT_THRESHOLD = 600;   // 超过此规模建议人工确认（可能是综合卖场）
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -96,7 +97,11 @@ async function probeShopify(origin) {
     if (!/json/i.test(ct)) return null;
     const body = await res.json();
     if (!body || !Array.isArray(body.products)) return null;
-    return body.products.length;   // 250 表示"至少 250，可能更多"
+    return {
+      count: body.products.length,
+      vendors: vendorDiversity(body.products),
+      retailer: isMultiBrandRetailer(body.products),
+    };
   } catch {
     return null;
   }
@@ -138,13 +143,20 @@ async function triageOne(domain) {
     // 仍尝试 Shopify 端点：有时首页超时但 CDN 上的 products.json 能通。
   }
 
-  const shopCount = await probeShopify(origin);
-  if (shopCount != null) {
+  const shop = await probeShopify(origin);
+  if (shop != null) {
     row.platform = "shopify";
-    row.productCount = shopCount >= 250 ? "250+" : String(shopCount);
-    if (shopCount >= 250) {
+    row.productCount = shop.count >= 250 ? "250+" : String(shop.count);
+    row.vendors = shop.vendors.distinct;
+    // Multi-brand retailer: many unrelated vendors, none dominating. These are
+    // out of scope (third-party brands aren't the site's own products), so
+    // flag rather than crawl — this is the check the HTTP channel used to skip.
+    if (shop.retailer) {
+      row.recommendation = "multi_brand_retailer";
+      row.note = `疑似综合卖场：${shop.vendors.distinct} 个 vendor，最大占比 ${(shop.vendors.topShare * 100).toFixed(0)}%`;
+    } else if (shop.count >= 250) {
       row.recommendation = "review_giant";
-      row.note = "规模大，确认是否综合卖场";
+      row.note = `规模大(${shop.vendors.distinct} vendor)，大站批处理`;
     } else {
       row.recommendation = "http_channel";
     }
@@ -189,20 +201,21 @@ function render(rows) {
   const by = (k) => rows.filter((r) => r.recommendation === k).length;
   lines.push("");
   lines.push(`总计 ${rows.length}：`
-    + `http_channel ${by("http_channel")}（确认可免浏览器）｜`
-    + `review_giant ${by("review_giant")}（Shopify 大站，需确认卖场）｜`
-    + `browser ${by("browser")}（需浏览器/本机探测受限）｜`
+    + `http_channel ${by("http_channel")}（可免浏览器）｜`
+    + `review_giant ${by("review_giant")}（Shopify 大站→大站批）｜`
+    + `multi_brand_retailer ${by("multi_brand_retailer")}（疑似卖场→排除）｜`
+    + `browser ${by("browser")}（需浏览器/本机受限）｜`
     + `dns_dead ${by("dns_dead")}（域名无法解析）`);
-  lines.push("注：http_channel/review_giant 是确认的 Shopify（正向探测，不误报）；"
-    + "browser 含本机网络受限的站，实际多数可访问，交由浏览器确认。");
+  lines.push("注：multi_brand_retailer 按 vendor 多样性判定（≥6 个 vendor 且最大占比<60%），"
+    + "第三方品牌非本站自有商品，应排除；review_giant 是自有大目录，走大站批。");
   return lines.join("\n");
 }
 
 function toCsv(rows) {
-  const header = ["domain", "final_url", "status", "platform", "product_count", "recommendation", "note"];
+  const header = ["domain", "final_url", "status", "platform", "product_count", "vendors", "recommendation", "note"];
   const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   return [header.join(","), ...rows.map((r) =>
-    [r.domain, r.finalUrl, r.status, r.platform, r.productCount, r.recommendation, r.note]
+    [r.domain, r.finalUrl, r.status, r.platform, r.productCount, r.vendors ?? "", r.recommendation, r.note]
       .map(esc).join(","))].join("\n") + "\n";
 }
 
