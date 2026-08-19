@@ -1,6 +1,6 @@
 # 多站点、浏览器租约与 worker 线程
 
-约束 `crawl-products` 在多个任务、多个 Chrome Profile、Codex In-App Browser 或另一台电脑上运行时的边界。核心变化（相对旧协议）：**并发决策在 spawn 时刻一次做完，运行期零协调**。旧的"worker 停在 preflight 等协调者派发指令"的调度屏障协议已废除——它本身就是停顿点。
+约束 `crawl-products` 在多个任务、多个 Chrome Profile、Codex In-App Browser 或另一台电脑上运行时的边界。核心规则是两级并发：**多个网站必须拆成多个顶层 worker 线程；每个网站 worker 还可创建一个 Luna high 数据子代理处理离线证据**。旧的"worker 停在 preflight 等协调者派发指令"的调度屏障协议已废除——它本身就是停顿点。
 
 ## 浏览器模式与租约身份
 
@@ -11,31 +11,32 @@
 
 租约身份以实例 ID 为准：extension 用 `extensionInstanceId`，iab 用 `browserId`（有 `codexAppSessionId` 一并记录）。只有实例 ID 不同才是独立租约；同一实例开多个 tab 仍是同一个租约，不能当成另一台电脑。
 
-## spawn 时定并发
+## 多网站强制多线程
 
-用户给出多个站点时，协调者在派生线程**之前**完成全部并发决策：
+用户给出两个或更多站点时，协调者必须在开始爬取前拆分站点任务：
 
-1. 确定可获得的独立租约数（见下）；
-2. N 个独立租约 → 最多 N 个并行 worker 线程；
-3. 共享同一租约的站点合并进**同一个**线程，由该线程内部顺序跑；
-4. 每个线程分配独立 `outDir`，binding 由线程自己建立——不得把父线程的 `browser`/`tab` 对象传给子线程。
+1. 每个网站建立一个独立 worker goal 和独立 `outDir`；
+2. 每个 worker 在线程内部自行调用所选浏览器模式、建立 binding 和 tab；不得接收或复用父线程的 `browser`/`tab` 对象；
+3. 按当前可用并发槽位同时启动尽可能多的网站 worker；网站数超过槽位时分批接续，但不得把它们合并成一个 worker 顺序跑完整生命周期；
+4. 每个 worker 独立推进状态机、落盘和恢复，协调者不参与站内步骤调度。
 
-**租约怎么数（关键，别在单会话里数）**：
+这里的“线程”指 Codex 原生 worker/task，不是同一 JavaScript 进程里的 `Promise.all`，也不是在同一 tab 上并发导航。
 
-- `iab`：租约不是"找"出来的，是**派生任务产生的**——每个顶层 Codex 任务自建 binding 时获得自己的 `browserId`。协调者在自己会话里只能看到 1 个 iab binding，这不代表并发上限是 1；公开站点多站并发的正确动作是**直接为每个站点 spawn 一个 worker 任务**，由各任务建 binding 后用实际返回的 `browserId` 事后验证互不相同。若两个任务拿到了相同的 `browserId`，把后者降级并入前者顺序跑。
-- **spawn 是 Codex 原生能力**：直接下达"为 <site> 开一个新线程/新任务，goal prompt 如下"即可，Codex 自己识别并创建；不需要也不存在专门的 API 调用。不要因为"没找到 spawn 函数"而退回单线程顺序执行。
-- `extension`：租约数 = 实际连接的 Chrome 扩展实例数（`extensionInstanceId` 互不相同才算多个，通常需要另一台电脑或独立 Profile）。这个可以在 spawn 前枚举。
+- `iab`：每个网站 worker 自建 binding，并记录自己的 `browserId`（有 `codexAppSessionId` 一并记录）。
+- `extension`：每个网站 worker 自行调用 extension binding，并记录实际 `extensionInstanceId`；不得从协调者或另一个 worker 传递 binding/tab。
+- spawn 使用当前环境提供的 Codex 原生线程或子代理能力；不要因为入口名称不同而退回单线程顺序执行。
 
-并发上限是"独立浏览器实例数"，不是站点数或产品数。单会话内不 spawn 任务就是单租约，顺序跑完所有站点。
+并发上限由当前可用 worker 槽位决定。槽位不足表示后续网站等待下一批线程，不表示可以把多网站任务改成单线程架构。
 
-## 一个线程 = 一个站点组 = 一个 goal
+## 一个顶层线程 = 一个网站 = 一个 goal
 
 worker 线程的初始 prompt 就是它的 goal，写成完成契约而不是步骤清单：
 
 ```
-你的唯一目标：让 <sites> 全部达到三种终态之一，在此之前不得结束回合：
+你的唯一目标：让 <site> 达到三种终态之一，在此之前不得结束回合：
   complete / terminal(带证据) / blocked(点名具体阻塞物)
-工作方式：读各站 <outDir>/state.json，按 crawl-products SKILL.md 的状态机从对应状态继续。
+工作方式：读 <outDir>/state.json，按 crawl-products SKILL.md 的状态机从对应状态继续。
+证据落盘后，如有可用并发槽位，创建一个 gpt-5.6-luna/high 数据子代理处理本地文本、图片与语义队列；你负责合并和验收它的结果。
 汇报 incomplete 不是终点；incomplete 的唯一合法动作是 resume。
 ```
 
@@ -43,10 +44,31 @@ worker 线程的初始 prompt 就是它的 goal，写成完成契约而不是步
 
 **可重入**：每个阶段落盘（state.json、HarvestPlan、checkpoint、证据包、语义队列）。线程死亡（超时、崩溃、被回收）不丢工作——把同一 goal prompt 原样重发，新线程读 state.json 从断点继续。
 
-## 协调者只做两件事
+## 站点线程内的 Luna high 数据子代理
 
-1. **轮询**各线程的 `state.json` 与产物时间戳；
-2. **踢一脚**：某线程状态长时间不动或线程已死 → 原样重发它的 goal prompt。不发送任何"下一步做什么"的指令——下一步由 state.json 决定。
+当 `evidence/records.json` 和图片已经落盘、任务存在本地文本或图片处理工作且有可用并发槽位时，站点 worker 可创建一个数据子代理，明确请求 `gpt-5.6-luna` 模型与 `high` reasoning。它适合处理：
+
+- 从本地页面文本中提取 Ingredients、Supplement Facts、用途和剂型证据；
+- 逐张读取本地画廊图片，识别 Facts/Ingredients/Label/背标并提取可证明内容；
+- 根据证据生成 `form`、`health_function`、`main_ingredients` 的候选语义结果与 trace；
+- 对分配给它的非重叠产品 ID 分区做批量数据清洗或标准化。
+
+父 worker 给子代理的任务必须是有界的：提供唯一站点 `outDir`、非重叠产品 ID 或文件清单、目标 schema、taxonomy 与独立结果文件路径。子代理只读原始证据，把建议结果写入独立 staging 文件；不得：
+
+- 获取或操作 browser binding/tab；
+- 修改 `state.json`、`harvest-result.json`、`checkpoint.json`、`evidence/records.json` 或其他引擎独占产物；
+- 与父 worker 同时写 `semantic-queue.json` 或正式导出文件；
+- 自行宣告站点 complete、跳过验证门或调用正式接口。
+
+父 worker 始终是站点 owner：检查子代理输出的证据引用与 schema，用 `semanticQueue.applySemanticOutcome()` 等正式接口合并，再继续 Tier 1+2+3 验证。子代理失败、超时或槽位暂不可用时，父 worker 从落盘状态恢复或等待下一可用槽位，不得丢弃该站点。
+
+调度优先级：先保证多个网站 worker 同时推进；尚有空闲槽位时，再由处于离线数据阶段的网站 worker 启动 Luna high。子代理结束后释放的槽位立即用于待启动网站或下一份有界数据任务。
+
+## 协调者职责
+
+1. **启动与补位**：为每个网站建立独立 worker；槽位释放后启动下一批待处理网站。站点 worker 自己管理其 Luna high 子代理；
+2. **轮询**各线程的 `state.json` 与产物时间戳；
+3. **踢一脚**：某线程状态长时间不动或线程已死 → 原样重发它的 goal prompt。不发送任何"下一步做什么"的指令——下一步由 state.json 决定。
 
 收货规则：协调者不信任线程的自我声明，接受 complete 前必跑 `verify.verifyRunArtifacts(outDir)`；审计 fail 就把问题清单连同 goal 重发给线程。任一站点未到终态，批次不得汇报完成或生成正式批次导出。
 

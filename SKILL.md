@@ -52,6 +52,12 @@ description: "用视觉优先的三步 preflight（站点判定 → 路径探索
 - profile/HarvestPlan 只存可复用方法，不存 Cookie、请求头、响应体或商品字段值。
 - 最终接口数据必须由 `lib/enrich-product-output.mjs` 生成，符合 [enrich-product-output.md](references/enrich-product-output.md)。
 
+**多站点并发**（→ [multithread-browser-workers.md](references/multithread-browser-workers.md)）
+
+- 输入包含两个或更多网站时，必须开启多个 Codex worker 线程；一个网站对应一个独立 goal、browser binding、tab 和 `outDir`，禁止由协调者在单线程内依次跑完整批次。
+- 每个站点 worker 在证据落盘后，可创建一个 `gpt-5.6-luna`、`high` reasoning 的数据子代理，并发处理本地文本提取、图片读取和语义补全；父 worker 仍负责合并、验证与完成判定。
+- 并发槽位不足时按批次启动剩余网站或数据子代理，不得因此退回单线程批次架构。
+
 ## 浏览器
 
 `browserMode` 默认 `"extension"`（本地 Chrome）；公开站点的多任务并发可显式选择 `"iab"`。用户明确选择的浏览器是硬约束，不得静默换成另一种模式；**同模式重建断掉的 binding 不算切换，是 incomplete 恢复的标准动作**。
@@ -278,17 +284,19 @@ const exported = await productOutput.writeEnrichProductExport(outDir, enrichedRe
 
 规则详见 [multithread-browser-workers.md](references/multithread-browser-workers.md)。要点：
 
-- **spawn 时定并发**：先验证独立浏览器 lease 数（`extensionInstanceId` / `browserId`），N 个 lease 开 N 个线程；共享 lease 的站点合进同一线程顺序跑。运行期零协调。
+- **多网站强制多线程**：输入有两个或更多网站时，为每个网站建立独立 worker goal；有多少可用并发槽位就同时推进多少网站，超过上限的按批次接续。禁止把多个网站合进同一 worker 顺序跑完整生命周期。
 - **一个线程 = 一个站点 = 一个 goal**，全生命周期不换手。goal prompt 模板：
 
 ```
 你的唯一目标：让 <site> 达到三种终态之一，在此之前不得结束回合：
   complete / terminal(带证据) / blocked(点名具体阻塞物)
 工作方式：读 <outDir>/state.json，按 crawl-products SKILL.md 的状态机从对应状态继续。
+证据落盘后，如有可用并发槽位，创建一个 gpt-5.6-luna/high 数据子代理处理本地文本、图片与语义队列；你负责合并和验收它的结果。
 汇报 incomplete 不是终点；incomplete 的唯一合法动作是 resume。
 ```
 
-- **协调者只做两件事**：轮询各线程 state.json；发现停滞或线程死亡，把同一 goal prompt 原样重发（线程可重入，从磁盘续）。收货前必跑 `verifyRunArtifacts()`。
+- **线程内数据子代理**：Luna high 只读分配给它的本地证据分区，输出独立结果文件；不得持有 browser/tab、修改引擎产物或 `state.json`、自报 complete。父 worker 用正式队列接口合并结果并跑完整验证门。
+- **协调者职责**：为每个网站启动独立 worker 并在槽位释放后补位；轮询各线程 state.json；发现停滞或线程死亡，把同一 goal prompt 原样重发（线程可重入，从磁盘续）。收货前必跑 `verifyRunArtifacts()`。
 - 同一 tab 上永不并发操作；详情读取默认顺序。
 
 ## 结果汇报
