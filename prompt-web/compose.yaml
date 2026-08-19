@@ -1,0 +1,10 @@
+services:
+  crawl-prompt-web:
+    build:
+      context: ..
+      dockerfile: prompt-web/Dockerfile
+    image: crawl-prompt-web:latest
+    container_name: crawl-prompt-web
+    restart: unless-stopped
+    ports:
+      - "8787:8080"

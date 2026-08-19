@@ -1,0 +1,6 @@
+.git
+node_modules
+.vite
+coverage
+.DS_Store
+.crawl-products
