@@ -272,13 +272,16 @@ const { applied, errors, entry } = semanticQueue.applySemanticOutcome(queueEntry
 
 ```js
 const exported = await productOutput.writeEnrichProductExport(outDir, enrichedRecords, {
-  processedAt: new Date().toISOString(),
+  capturedAt: new Date().toISOString(),
+  channel: "dtc",
+  source: "crawl-products",
   updateExisting: false,
-  runCompletion: { status: "complete" },
+  runCompletion: result.completion,
+  productLimit: result.productLimit,
 });
 ```
 
-严格模式拒绝缺 `productUrl`、`price`、图片、gallery review、双来源 Facts review、form、healthFunctions、mainIngredients、语义证据或缺 `substance/category` 的主成分。正式产物批次级全有或全无；`review` 记录单独成文件，不进 `products.json`。中间库存必须显式 `outputMode:"inventory_partial"` 并写 `semantic-review-queue.json`。`domain` 默认公司可注册域名；`price` 默认必导出（页面价 → 变体价，原样字符串），`sku` 为可选字段有值才输出。除非用户明确授权，只生成请求文件，不调用接口。
+严格模式拒绝缺 `productUrl`、`price`、图片、gallery review、双来源 Facts review、form、healthFunctions、mainIngredients、语义证据或缺 `substance/category` 的主成分。正式产物批次级全有或全无；`review` 记录单独成文件，不进 `products.json`。中间库存必须显式 `outputMode:"inventory_partial"` 并写 `semantic-review-queue.json`。`domain` 默认公司可注册域名；`price` 默认必导出（页面价 → 变体价，原样字符串）。每个可售变体单独生成一条 Link Monitor 风格请求：`variantId` → `externalId`，SKU 缺省时可作为 `externalId` 兜底并保存在 `variantAttrs.sku`，变体选项放 `variantAttrs.options`，健康功能输出名称字符串数组；兄弟变体的 `productName` 必须带选项标签，避免首次入库被 `name + company` 兜底合并。未封顶且完成的全目录任务输出 `crawlScope:"full"`，其他任务输出 `"partial"`。禁止把接口不接收的顶层 `productGroupId`、`sku`、`variantId`、`variantOptions` 写进最终 payload；原始值仍完整保留在 `crawl-records.json`。除非用户明确授权，只生成请求文件，不调用接口。
 
 ## 多站点与 worker 线程
 

@@ -4,7 +4,7 @@
 
 ## 机械阶段的平台变体展开（首选路径）
 
-平台商城（Shopify 等）的变体不需要交互：`runHarvest()` 对每个 `/products/<handle>` 详情 URL 自动探测 `<handle>.json` 数据端点，成功时把每个可售状态写进证据包的 `variants[]`（variantId、SKU、选项组合、价格、变体 URL、变体图），并用默认可售变体的 SKU 回填 `fields.sku`。此路径纯 HTTP、不占浏览器，语义回合仍按基础商品执行一次，变体明细原样进入 `crawl-records.json` 交下游关联。
+平台商城（Shopify 等）的变体不需要交互：`runHarvest()` 对每个 `/products/<handle>` 详情 URL 自动探测 `<handle>.json` 数据端点，成功时把每个可售状态写进证据包的 `variants[]`（variantId、SKU、选项组合、价格、变体 URL、变体图），并用默认可售变体的 SKU 回填 `fields.sku`。此路径纯 HTTP、不占浏览器，语义回合仍按基础商品执行一次。最终导出层再把 `variants[]` 展开成一变体一条 Supply Smart enrich 请求。
 
 **注意口径**：数据端点只用于**补全已通过站点导航发现的商品**；端点独有、导航不可达的商品不属于目录（见 SKILL.md 目录口径），端点总数也不作为 oracle 期望值。
 
@@ -33,4 +33,7 @@
 ## 持久化
 
 - 若站点的视觉路线已映射变体选择器，把不含具体商品值的 `variantProfile`（选择器、分组和等待动作）随 profile 保存；复跑时先用它定位控制，再用当前页面实际呈现的状态值生成记录。某次运行的具体选项值不写进可复用 profile。
-- 变体的详细状态由 Skill 原样保留在 `_meta.variant`、`fields.variant_options`、`fields.variant_name`、`fields.variant_id`/`variant_sku` 和对应图片/Facts 证据中。导出时不为了适配接口擅自改写基础 `productName` 或拼接变体后缀；下游 enrich 接口负责变体关联和落库，`crawl-records.json` 是完整详细数据源。
+- 变体的详细状态由 Skill 原样保留在 `_meta.variant`、`variants[]`、`fields.variant_options`、`fields.variant_name`、`fields.variant_id`/`variant_sku` 和对应图片/Facts 证据中；`crawl-records.json` 是完整详细数据源。
+- 最终接口请求使用 `variantId` 作为 `externalId`，没有 variantId 时用 SKU 兜底；SKU 和完整选项同时保存在 `variantAttrs`。变体 URL 同时写 `productUrl/sourceUrl`。
+- 每个兄弟变体的 `productName` 使用 `母商品名 — 选项标签`。这是为了配合 Supply Smart enrich 的首次 `name + company` 兜底匹配，确保每个变体建立独立 product；后续则由 `(channel, externalId)` 稳定命中。
+- 最终 payload 不输出 enrich schema 不接受的顶层 `productGroupId`、`sku`、`variantId`、`variantOptions`；这些原值只在 `crawl-records.json` 和 `variantAttrs` 中保留。

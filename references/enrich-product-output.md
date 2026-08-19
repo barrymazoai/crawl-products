@@ -21,25 +21,29 @@
 | 字段 | 必需 | 来源 |
 |---|---:|---|
 | `domain` | 是 | 明确覆盖值，或商品来源的公司可注册域名；如 `us.shaklee.com` → `shaklee.com` |
-| `productName` | 是 | 母商品名 `fields.title`；每个变体行共用同一母商品名，不拼变体后缀 |
-| `productUrl` | 是（Skill 严格模式） | **变体自己的**详情 URL（带 `?variant=`）；一变体一行 |
-| `productGroupId` | 是 | 母商品关联键 = 去掉 `?variant=` 的母商品基础 URL；同一母商品的所有变体行共享它，下游 `GROUP BY productGroupId` 聚合回母商品 |
-| `sku` | 否 | 变体自己的 SKU（`variant.sku` → `fields.sku`）；一变体一 SKU |
-| `variantId` | 否 | 变体 ID（有变体时带上） |
-| `variantOptions` | 否 | 变体的选项组合对象，如 `{ "Saveur": "Neutre", "Quantité": "1 BOITE" }` |
+| `productName` | 是 | 无变体时用 `fields.title`；有变体时用 `母商品名 — 选项标签`，确保首次入库不会被接口的 `name + company` 兜底匹配合并 |
+| `productUrl` | 是（Skill 严格模式） | **变体自己的**详情 URL（如带 `?variant=`）；一变体一行 |
+| `channel` | 是 | 默认 `dtc`；若任务抓取 Amazon/iHerb 等渠道则显式覆盖真实小写渠道名 |
+| `externalId` | 条件必需 | 变体有稳定 ID 时必传：`variantId` 优先，SKU 兜底；普通无 ID 商品可省略，由 `sourceUrl` 锚定 |
+| `sourceUrl` | 是 | 与本行真实变体页面一致，用于挂牌身份匹配 |
+| `capturedAt` | 是 | 抓取时刻 ISO 字符串；`processedAt` 仅作为旧调用参数别名，不再写进最终 payload |
+| `crawlScope` | 是 | 未封顶且全目录完成为 `full`；封顶、抽样或未证实完整为 `partial` |
+| `source` | 是 | 默认 `crawl-products`，也可由调用方传具体任务标签 |
+| `variantAttrs` | 否 | 变体原始属性：`label`、可识别的 `pack`、完整 `options`，以及有值时的 `sku` |
+| `titleRaw` | 否 | 页面母商品原始标题；变体行仍保留它用于归属修正 |
 | `images` | 否 | 变体有专属图（`variant.imageUrl`）时它排首位，其余继承母商品画廊；无专属图则全部继承母商品 |
-| `healthFunctions` | 否 | **对齐受控词表**：模型产出的短语经 `health-function-vocab` 匹配到 658 词表，输出 `[{id, name}]`；没对上词表的进 review，不硬塞 |
+| `healthFunctions` | 否 | 对齐受控词表后输出 `string[]` 名称；词表 ID 只留在爬虫内部，没匹配的进 review |
 | `mainIngredients` | 否 | 有证据的 `fields.main_ingredients`；Skill 严格模式要求每项都是完整 taxonomy 对象 |
 | `productForm` | 否 | 有证据的 `fields.form` |
 | `updateExisting` | 否 | 默认且显式输出 `false`；补已有产品关系/图片时设为 `true` |
-| `processedAt` | 否 | 本次导出时间，ISO 字符串 |
 | `error` | 否 | 上游显式错误信息 |
 | `price` | 是（Skill 严格模式） | `fields.price` → `retail_price` → 默认可售变体价；原始字符串（含币种/格式）原样保留，接口侧归一。缺失进 error/review 队列。可传 `requirePrice:false` 放宽 |
+| `currency`、`listPrice`、`rating`、`reviewCount`、`salesRank`、`inStock`、`unitsSold`、`unitsSoldPeriod` | 否 | 与 Link Monitor 相同：有真实观测值才输出；`unitsSold` 与合法 period 成对输出 |
 | `supplementFactsOCR` | 否 | 接口目前接收但不落库，默认不导出（需 `includeNonPersistedFields:true`） |
 
 `domain` 默认压缩为公司可注册域名。接口按数据库公司域名匹配；若数据库确实保存 `shop.example.com` 等特殊值，用显式 `domain` 或 `domainByOrigin` 覆盖。`domain` 不能代替 `productUrl`，后者始终保留完整详情地址。
 
-变体不是 Skill 的丢弃项：原始 record 的 `_meta.variant` 保存 `variantId`、SKU、选项组合、默认状态和状态来源，`productUrl` 保留实际变体状态 URL，图片/Facts 仍按变体独立复核。下游 enrich 接口负责变体关联和落库；Skill 不擅自改写基础 `productName` 或拼接名称来模拟接口字段。
+变体不是 Skill 的丢弃项：原始 record 的 `_meta.variant`/`variants[]` 保存 `variantId`、SKU、选项组合、默认状态和状态来源，`productUrl` 保留实际变体状态 URL，图片/Facts 仍按变体独立复核。最终 enrich payload 不再输出 schema 不接收的顶层 `productGroupId`、`sku`、`variantId`、`variantOptions`；完整原值仍保留在 `crawl-records.json`。因为 enrich 在新锚点首次出现时仍会用 `productName + company` 兜底找产品，所以兄弟变体必须使用不同的变体限定名称，`externalId/sourceUrl` 则保证后续观测稳定命中。
 
 ## 成分 taxonomy
 
@@ -123,9 +127,12 @@ const exported = await productOutput.writeEnrichProductExport(
   outDir,
   result.records,
   {
-    processedAt: new Date().toISOString(),
+    capturedAt: new Date().toISOString(),
+    channel: "dtc",
+    source: "crawl-products",
     updateExisting: false,
     runCompletion: result.completion,
+    productLimit: result.productLimit,
     // domain: "example.com",
     // domainByOrigin: { "shop.example.com": "example.com" },
   },
@@ -161,11 +168,13 @@ await productOutput.writeEnrichProductExport(outDir, records, {
 
 `price` 默认导出且为严格模式必需字段：取 `fields.price` → `retail_price` → 默认可售变体价，原始字符串原样保留（多币种/多语言由接口侧归一）；缺价的记录进 error/review，不进 `products.json`。确有整站无价场景时传 `requirePrice:false` 放宽。`supplementFactsOCR` 仍默认不导出，需要时传 `includeNonPersistedFields: true`。
 
+导出器根据 `runCompletion.status` 和 `productLimit.accepted` 自动推断 `crawlScope`：只有未封顶且完成态才是 `full`，其余均为 `partial`。调用方也可以显式传 `crawlScope`，但封顶任务显式传 `full` 会被拒绝。
+
 `updateExisting:false` 命中同名+同公司产品时直接跳过；需要给已有产品补关系、taxonomy 或图片时显式传 `updateExisting:true`。
 
 提交前必须满足：
 
-1. `inputsReady + errors === recordsReceived`。
+1. `recordsMapped + errors === recordsReceived`；`inputsReady` 是展开后的变体请求数，允许大于 `recordsMapped`。
 2. `product-enrich-errors.json` 必须为空；失败记录只能留在 incomplete 候选导出，不能一边解释一边生成正式批次。
 3. 每个 `domain` 是目标数据库中的公司匹配域名，每个 `productUrl` 是真实详情 URL。
 4. `galleryReview.status` 为 `visual_complete`，且 `reviewed_image_urls` 覆盖最终 `images` 的每个 URL；`images` 包含完整画廊、可取得的最佳直接 CDN/原图和经视觉确认的 Facts 图片，推测的原图已经过真实浏览器 MIME/尺寸验证；否则 review 必须明确说明只有一张可用图或原图候选为什么被拒绝。
