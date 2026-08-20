@@ -9,6 +9,7 @@ const port = Number(process.env.PORT || 8080);
 const pagePath = fileURLToPath(new URL("./index.html", import.meta.url));
 const promptScript = process.env.PROMPT_SCRIPT
   || fileURLToPath(new URL("./generate-prompt.mjs", import.meta.url));
+const statusDashboardUrl = String(process.env.STATUS_DASHBOARD_URL || "").replace(/\/$/, "");
 const page = await readFile(pagePath);
 
 function sendJson(response, status, payload) {
@@ -35,6 +36,27 @@ async function readJson(request) {
   } catch {
     throw new Error("请求格式无效");
   }
+}
+
+async function proxyStatus(request, response, pathname, search) {
+  if (!statusDashboardUrl) {
+    sendJson(response, 503, { error: "状态服务尚未配置" });
+    return;
+  }
+  const body = request.method === "POST" ? await readJson(request) : undefined;
+  const upstream = await fetch(`${statusDashboardUrl}${pathname}${search}`, {
+    method: request.method,
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = Buffer.from(await upstream.arrayBuffer());
+  response.writeHead(upstream.status, {
+    "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
+    "Content-Length": data.length,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(data);
 }
 
 function normalizeOptions(body) {
@@ -108,6 +130,17 @@ const server = http.createServer(async (request, response) => {
 
   if (request.method === "GET" && url.pathname === "/healthz") {
     sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/status") {
+    await proxyStatus(request, response, "/status", url.search);
+    return;
+  }
+
+  if (["GET", "POST"].includes(request.method)
+      && /^\/api\/(runs|reviews|sources)(\/|$)/.test(url.pathname)) {
+    await proxyStatus(request, response, url.pathname, url.search);
     return;
   }
 

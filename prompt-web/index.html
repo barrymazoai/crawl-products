@@ -40,6 +40,9 @@
 
     header { margin-bottom: 28px; }
 
+    .header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+    .status-link { display: inline-flex; align-items: center; min-height: 42px; padding: 0 15px; border: 1px solid var(--line); border-radius: 12px; color: var(--accent-dark); background: rgba(255,253,248,.8); font-size: 13px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+
     .eyebrow {
       display: inline-flex;
       align-items: center;
@@ -260,6 +263,7 @@
       .workspace { grid-template-columns: 1fr; }
       .settings-card { order: -1; }
       #sites { min-height: 260px; }
+      .header-row { flex-direction: column; }
     }
 
     @media (max-width: 480px) {
@@ -272,10 +276,13 @@
 </head>
 <body>
   <main>
-    <header>
-      <div class="eyebrow">Crawl Products</div>
-      <h1>把网站清单变成可运行的 Prompt</h1>
-      <p class="lede">一行一个网站。生成结果会先拉取最新版 Skill，再按站点拆分线程、处理证据并完成爬取验收。</p>
+    <header class="header-row">
+      <div>
+        <div class="eyebrow">Crawl Products</div>
+        <h1>把网站清单变成可运行的 Prompt</h1>
+        <p class="lede">一行一个网站。生成结果会先拉取最新版 Skill，再按站点拆分线程、处理证据并完成爬取验收。</p>
+      </div>
+      <a class="status-link" href="/status">查看任务状态</a>
     </header>
 
     <section class="workspace" aria-label="Prompt 生成器">

@@ -8,3 +8,5 @@ services:
     restart: unless-stopped
     ports:
       - "8787:8080"
+    environment:
+      STATUS_DASHBOARD_URL: http://host.docker.internal:8788
