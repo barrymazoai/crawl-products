@@ -319,7 +319,7 @@
           <label for="note">附加说明（可选）</label>
           <textarea id="note" placeholder="例如：优先处理美国站点"></textarea>
         </div>
-        <div class="callout">生成的 Prompt 固定包含 <strong>git pull --ff-only</strong>，并要求拉取失败时停止，避免旧版 Skill 继续运行。</div>
+        <div class="callout">生成的 Prompt 会要求执行端先拉取最新的 crawl-products Skill，但不限定具体拉取命令。</div>
         <button class="primary" id="generate" type="button">生成运行 Prompt</button>
         <p class="hint">快捷键：⌘/Ctrl + Enter</p>
       </aside>

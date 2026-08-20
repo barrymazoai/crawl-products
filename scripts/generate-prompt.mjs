@@ -135,7 +135,7 @@ function batchPlan(opts) {
   return lines.join("\n");
 }
 
-const PULL_LINE = "开工前先执行 git -C ~/.codex/skills/crawl-products pull --ff-only；拉取失败就停止并报告，不得继续使用旧版 skill。拉取成功后，";
+const PULL_LINE = "开工前先拉取最新的 crawl-products Skill，然后";
 
 function domainOf(url) {
   if (url === "<site>") return "<site 域名>";
