@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #17211d;
+  --muted: #66716c;
+  --paper: #fffdf8;
+  --wash: #edf1ed;
+  --line: #d8dfdb;
+  --accent: #146b4d;
+  --accent-dark: #0c5039;
+  --focus: #f2b84b;
+  --danger: #a6342a;
+}
+
+* { box-sizing: border-box; }
+
+html { min-width: 320px; background: var(--wash); }
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 8% 4%, rgba(242, 184, 75, 0.2), transparent 30rem),
+    radial-gradient(circle at 92% 88%, rgba(20, 107, 77, 0.14), transparent 34rem),
+    var(--wash);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+}
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+
+::selection { color: #fff; background: var(--accent); }
+
+.serif { font-family: Georgia, "Songti SC", "STSong", serif; }
+
+.surface {
+  border: 1px solid rgba(23, 33, 29, 0.09);
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  box-shadow: 0 24px 70px rgba(31, 47, 40, 0.11);
+}
+
+.field-control {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  color: var(--ink);
+  background: #fff;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.field-control:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(20, 107, 77, 0.14);
+}
+
+.button-lift { transition: transform 150ms ease, background 150ms ease, opacity 150ms ease; }
+.button-lift:hover:not(:disabled) { transform: translateY(-1px); }
+.button-lift:active:not(:disabled) { transform: translateY(0); }
+.button-lift:disabled { cursor: wait; opacity: 0.62; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+}
